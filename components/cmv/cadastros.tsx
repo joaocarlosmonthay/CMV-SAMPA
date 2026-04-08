@@ -1,146 +1,155 @@
 "use client"
 
-import { useState } from "react"
-import { PlusCircle, CheckCircle2, Package } from "lucide-react"
+import { useState, useEffect } from "react"
+import { PlusCircle, CheckCircle2, Package, Pencil, Trash2, X, Tags } from "lucide-react"
+import { supabase } from "@/lib/supabase"
 
-const GRUPOS = ["Embalagens Pizza (CMV)", "Massas", "Laticínios", "Carnes", "Hortifruti"]
 const UNIDADES = ["Kg", "Litro", "Unidade", "Pacote"]
 
 export type Produto = {
-  id: number
-  nome: string
-  grupo: string
-  unidade: string
+  id: number; nome: string; grupo: string; unidade: string
 }
 
-export const PRODUTOS_INICIAIS: Produto[] = [
-  { id: 1, nome: "Queijo Mussarela", grupo: "Laticínios", unidade: "Kg" },
-  { id: 2, nome: "Farinha de Trigo", grupo: "Massas", unidade: "Kg" },
-  { id: 3, nome: "Tomate", grupo: "Hortifruti", unidade: "Kg" },
-  { id: 4, nome: "Frango", grupo: "Carnes", unidade: "Kg" },
-  { id: 5, nome: "Caixa de Pizza", grupo: "Embalagens Pizza (CMV)", unidade: "Unidade" },
-  { id: 6, nome: "Saco para Pizza", grupo: "Embalagens Pizza (CMV)", unidade: "Unidade" },
-]
-
 interface CadastrosProps {
-  produtos: Produto[]
-  onAddProduto: (p: Produto) => void
+  produtos: Produto[]; onAddProduto: (p: Produto) => void
 }
 
 export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
+  const [aba, setAba] = useState<"produtos" | "categorias">("produtos")
+  const [gruposDB, setGruposDB] = useState<{id: number, nome: string}[]>([])
   const [nome, setNome] = useState("")
-  const [grupo, setGrupo] = useState("")
+  const [grupoId, setGrupoId] = useState("")
   const [unidade, setUnidade] = useState("")
-  const [saved, setSaved] = useState(false)
+  const [editandoId, setEditandoId] = useState<number | null>(null)
+  const [salvando, setSalvando] = useState(false)
+  const [novaCategoria, setNovaCategoria] = useState("")
 
-  const handleSalvar = () => {
-    if (!nome.trim() || !grupo || !unidade) return
-    onAddProduto({ id: Date.now(), nome: nome.trim(), grupo, unidade })
-    setNome("")
-    setGrupo("")
-    setUnidade("")
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  useEffect(() => { carregarCategorias() }, [])
+
+  const carregarCategorias = async () => {
+    const { data } = await supabase.from('grupos').select('*').order('nome')
+    if (data) setGruposDB(data)
   }
 
-  const byGroup = GRUPOS.reduce<Record<string, Produto[]>>((acc, g) => {
-    acc[g] = produtos.filter((p) => p.grupo === g)
+  const handleSalvarProduto = async () => {
+    if (!nome.trim() || !grupoId || !unidade) return
+    setSalvando(true)
+    if (editandoId) {
+      await supabase.from('produtos').update({ nome: nome.trim(), unidade_medida: unidade, grupo_id: parseInt(grupoId) }).eq('id', editandoId)
+    } else {
+      const gNome = gruposDB.find(g => g.id === parseInt(grupoId))?.nome || "Outros"
+      onAddProduto({ id: 0, nome: nome.trim(), grupo: gNome, unidade })
+    }
+    setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null); setSalvando(false)
+    if (editandoId) window.location.reload()
+  }
+
+  const handleDeletarProduto = async (id: number, nomeProd: string) => {
+    if (window.confirm(`Apagar o produto ${nomeProd} definitivamente?`)) {
+      await supabase.from('produtos').delete().eq('id', id)
+      window.location.reload()
+    }
+  }
+
+  const handleSalvarCategoria = async () => {
+    if (!novaCategoria.trim()) return
+    await supabase.from('grupos').insert([{ nome: novaCategoria.trim() }])
+    setNovaCategoria("")
+    carregarCategorias()
+  }
+
+  const handleDeletarCategoria = async (id: number, nomeCat: string) => {
+    if (window.confirm(`ATENÇÃO: Apagar a categoria ${nomeCat} vai afetar os produtos dentro dela. Continuar?`)) {
+      await supabase.from('grupos').delete().eq('id', id)
+      carregarCategorias()
+      window.location.reload()
+    }
+  }
+
+  const byGroup = gruposDB.reduce<Record<string, Produto[]>>((acc, g) => {
+    acc[g.nome] = produtos.filter((p) => p.grupo === g.nome)
     return acc
   }, {})
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold text-foreground mb-1">Cadastro de Produtos</h2>
-        <p className="text-muted-foreground text-base">Adicione ingredientes ao banco de dados</p>
+    <div className="space-y-6">
+      <div className="flex gap-2 p-1 bg-muted rounded-xl w-fit">
+        <button onClick={() => setAba("produtos")} className={`px-6 py-2.5 rounded-lg font-bold transition-all ${aba === "produtos" ? "bg-white text-[#C0392B] shadow" : "text-muted-foreground"}`}>Produtos</button>
+        <button onClick={() => setAba("categorias")} className={`px-6 py-2.5 rounded-lg font-bold transition-all ${aba === "categorias" ? "bg-white text-[#C0392B] shadow" : "text-muted-foreground"}`}>Categorias</button>
       </div>
 
-      {/* Formulário */}
-      <div className="bg-card rounded-2xl border border-border p-6 shadow-sm space-y-5">
-        <h3 className="text-xl font-bold text-foreground">Novo Produto</h3>
-
-        <div className="space-y-2">
-          <label className="text-base font-semibold text-foreground block">Nome do Produto</label>
-          <input
-            type="text"
-            value={nome}
-            onChange={(e) => setNome(e.target.value)}
-            placeholder="Ex: Queijo Mussarela"
-            className="w-full text-lg px-4 py-3.5 rounded-xl border-2 border-input bg-background focus:border-[#C0392B] focus:outline-none transition-colors"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <div className="space-y-2">
-            <label className="text-base font-semibold text-foreground block">Grupo</label>
-            <select
-              value={grupo}
-              onChange={(e) => setGrupo(e.target.value)}
-              className="w-full text-lg px-4 py-3.5 rounded-xl border-2 border-input bg-background focus:border-[#C0392B] focus:outline-none transition-colors appearance-none cursor-pointer"
-            >
-              <option value="">Selecione o grupo</option>
-              {GRUPOS.map((g) => (
-                <option key={g} value={g}>{g}</option>
-              ))}
-            </select>
+      {aba === "categorias" ? (
+        <div className="bg-card p-6 rounded-2xl border shadow-sm space-y-5 animate-in fade-in">
+          <h3 className="text-xl font-bold flex items-center gap-2"><Tags className="text-[#C0392B]" /> Gerir Categorias</h3>
+          <div className="flex gap-3">
+            <input value={novaCategoria} onChange={e => setNovaCategoria(e.target.value)} placeholder="Ex: Bebidas" className="flex-1 p-4 text-lg border-2 rounded-xl focus:border-[#C0392B] outline-none" />
+            <button onClick={handleSalvarCategoria} disabled={!novaCategoria.trim()} className="bg-[#1E6B43] text-white px-8 rounded-xl font-bold hover:bg-green-800 disabled:opacity-50">Adicionar</button>
           </div>
-
-          <div className="space-y-2">
-            <label className="text-base font-semibold text-foreground block">Unidade de Medida</label>
-            <select
-              value={unidade}
-              onChange={(e) => setUnidade(e.target.value)}
-              className="w-full text-lg px-4 py-3.5 rounded-xl border-2 border-input bg-background focus:border-[#C0392B] focus:outline-none transition-colors appearance-none cursor-pointer"
-            >
-              <option value="">Selecione a unidade</option>
-              {UNIDADES.map((u) => (
-                <option key={u} value={u}>{u}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <button
-          onClick={handleSalvar}
-          disabled={!nome.trim() || !grupo || !unidade}
-          className="w-full flex items-center justify-center gap-3 text-xl font-bold py-4 px-6 rounded-xl bg-[#C0392B] text-white hover:bg-[#9B2B1F] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {saved ? (
-            <><CheckCircle2 className="w-6 h-6" /> Produto Salvo!</>
-          ) : (
-            <><PlusCircle className="w-6 h-6" /> Salvar Produto</>
-          )}
-        </button>
-      </div>
-
-      {/* Lista de produtos por grupo */}
-      <div className="space-y-6">
-        {GRUPOS.map((g) => {
-          const lista = byGroup[g]
-          if (!lista || lista.length === 0) return null
-          return (
-            <div key={g} className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
-              <div className="px-6 py-4 bg-muted border-b border-border flex items-center gap-2">
-                <Package className="w-5 h-5 text-[#C0392B]" />
-                <h4 className="text-lg font-bold text-foreground">{g}</h4>
-                <span className="ml-auto text-sm font-medium text-muted-foreground bg-background px-2.5 py-0.5 rounded-full border border-border">
-                  {lista.length} {lista.length === 1 ? "item" : "itens"}
-                </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+            {gruposDB.map(c => (
+              <div key={c.id} className="p-4 bg-muted border rounded-xl flex justify-between items-center">
+                <span className="font-bold text-lg">{c.nome}</span>
+                <button onClick={() => handleDeletarCategoria(c.id, c.nome)} className="p-2 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 size={20}/></button>
               </div>
-              <ul className="divide-y divide-border">
-                {lista.map((p) => (
-                  <li key={p.id} className="flex items-center justify-between px-6 py-4">
-                    <span className="text-base font-semibold text-foreground">{p.nome}</span>
-                    <span className="text-sm font-medium text-muted-foreground bg-muted px-3 py-1 rounded-full">
-                      {p.unidade}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-6 animate-in fade-in">
+          <div className={`bg-card rounded-2xl border-2 p-6 shadow-sm space-y-5 ${editandoId ? "border-orange-500 bg-orange-50/50" : "border-border"}`}>
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold">{editandoId ? "Editar Produto" : "Novo Produto"}</h3>
+              {editandoId && <button onClick={() => {setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null)}} className="text-muted-foreground hover:text-red-500"><X /></button>}
             </div>
-          )
-        })}
-      </div>
+            <div className="space-y-2">
+              <label className="font-semibold block">Nome do Produto</label>
+              <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <div className="space-y-2">
+                <label className="font-semibold block">Categoria</label>
+                <select value={grupoId} onChange={(e) => setGrupoId(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none">
+                  <option value="">Selecione...</option>
+                  {gruposDB.map((g) => <option key={g.id} value={g.id}>{g.nome}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="font-semibold block">Unidade</label>
+                <select value={unidade} onChange={(e) => setUnidade(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none">
+                  <option value="">Selecione...</option>
+                  {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+            </div>
+            <button onClick={handleSalvarProduto} disabled={!nome.trim() || !grupoId || !unidade || salvando} className="w-full py-4 rounded-xl bg-[#C0392B] text-white font-bold disabled:opacity-50 flex justify-center gap-2">
+              {salvando ? "A Guardar..." : editandoId ? <><CheckCircle2 /> Atualizar</> : <><PlusCircle /> Salvar</>}
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            {gruposDB.map((g) => {
+              const lista = byGroup[g.nome]
+              if (!lista || lista.length === 0) return null
+              return (
+                <div key={g.id} className="bg-card rounded-2xl border shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 bg-muted border-b flex items-center gap-2"><Package className="text-[#C0392B]" /><h4 className="text-lg font-bold">{g.nome}</h4><span className="ml-auto text-sm font-medium bg-background px-2 py-0.5 rounded-full border">{lista.length} itens</span></div>
+                  <ul className="divide-y">
+                    {lista.map((p) => (
+                      <li key={p.id} className="flex items-center justify-between px-6 py-4">
+                        <div><span className="font-semibold block">{p.nome}</span><span className="text-xs text-muted-foreground uppercase">{p.unidade}</span></div>
+                        <div className="flex gap-2">
+                          <button onClick={() => {setNome(p.nome); setGrupoId(String(g.id)); setUnidade(p.unidade); setEditandoId(p.id); window.scrollTo(0,0)}} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Pencil size={20}/></button>
+                          <button onClick={() => handleDeletarProduto(p.id, p.nome)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={20}/></button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

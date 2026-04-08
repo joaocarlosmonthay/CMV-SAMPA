@@ -4,10 +4,13 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Vermelho Tomate */
-  --tomato: #C0392B;
-  /* Verde Manjericão */
-  --basil: #1E6B43;
+  /* Azul Royal */
+  --blue-pizza: #2563EB;
+  /* Amarelo Pizzaria */
+  --yellow-pizza: #FACC15;
+  /* Azul Escuro (Sidebar) */
+  --dark-blue: #1E3A8A;
+
   /* Cores base */
   --background: oklch(0.97 0 0);
   --foreground: oklch(0.13 0 0);
@@ -15,39 +18,42 @@
   --card-foreground: oklch(0.13 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.13 0 0);
-  /* Primária = Vermelho Tomate */
-  --primary: #C0392B;
+  
+  /* Primária = Azul Royal */
+  --primary: var(--blue-pizza);
   --primary-foreground: oklch(1 0 0);
-  /* Secundária = Verde Manjericão */
-  --secondary: #1E6B43;
-  --secondary-foreground: oklch(1 0 0);
+  /* Secundária = Amarelo Pizzaria */
+  --secondary: var(--yellow-pizza);
+  --secondary-foreground: var(--dark-blue);
+  
   --muted: oklch(0.93 0 0);
   --muted-foreground: oklch(0.42 0 0);
-  --accent: #1E6B43;
-  --accent-foreground: oklch(1 0 0);
-  --destructive: #C0392B;
+  --accent: var(--yellow-pizza);
+  --accent-foreground: var(--dark-blue);
+  --destructive: #ef4444;
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.87 0 0);
   --input: oklch(0.87 0 0);
-  --ring: #C0392B;
-  --chart-1: #C0392B;
-  --chart-2: #1E6B43;
+  --ring: var(--blue-pizza);
+  
+  --chart-1: var(--blue-pizza);
+  --chart-2: var(--yellow-pizza);
   --chart-3: oklch(0.55 0 0);
   --chart-4: oklch(0.75 0.12 60);
   --chart-5: oklch(0.65 0.08 200);
+  
   --radius: 0.75rem;
-  /* Sidebar = vermelho escuro */
-  --sidebar: #9B2B1F;
+  
+  /* Sidebar = Azul Escuro */
+  --sidebar: var(--dark-blue);
   --sidebar-foreground: oklch(1 0 0);
   --sidebar-primary: oklch(1 0 0);
-  --sidebar-primary-foreground: #9B2B1F;
-  --sidebar-accent: #7A2218;
+  --sidebar-primary-foreground: var(--dark-blue);
+  --sidebar-accent: #1e40af;
   --sidebar-accent-foreground: oklch(1 0 0);
-  --sidebar-border: #7A2218;
+  --sidebar-border: #1e40af;
   --sidebar-ring: oklch(1 0 0);
 }
-
-
 
 @theme inline {
   --font-sans: 'Geist', 'Geist Fallback';

@@ -1,154 +1,101 @@
 "use client"
 
-import { useState } from "react"
-import { Box, Droplets, Trash2, Package, CheckCircle2, AlertTriangle } from "lucide-react"
-import type { LancamentosData, OutrosCustos } from "./lancamentos"
-
-// 1. Importação do Supabase
+import { useState, useEffect } from "react"
+import { ReceiptText, CheckCircle2, Droplets, Package, Trash2, Box, Users } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
-const formatBRL = (v: number) =>
-  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-
-const OUTROS_CAMPOS: { key: keyof OutrosCustos; label: string; sublabel?: string; icon: React.ElementType }[] = [
-  { key: "embalagens", label: "Outras Embalagens", sublabel: "Excl. caixas/sacos de pizza", icon: Box },
-  { key: "consumoInterno", label: "Consumo Interno", icon: Droplets },
-  { key: "testeMkt", label: "Teste / Mkt", icon: Package },
-  { key: "materialLimpeza", label: "Material de Limpeza", icon: Package },
-  { key: "desperdicios", label: "Desperdícios", icon: Trash2 },
-]
-
-interface OutrosCustasDREProps {
-  data: LancamentosData
-  onChange: (data: LancamentosData) => void
+interface OutrosCustasProps {
+  data: any
+  dataInicio: string
+  dataFim: string
+  onChange: () => void
 }
 
-export function OutrosCustasDRE({ data, onChange }: OutrosCustasDREProps) {
-  const [salvo, setSalvo] = useState(false)
+const OUTROS_CAMPOS = [
+  { key: "embalagens", label: "Embalagens", desc: "Caixas, sacos, etc.", icon: Box },
+  { key: "consumoInterno", label: "Consumo Interno", desc: "Refeição dos funcionários", icon: Droplets },
+  { key: "consumoSocios", label: "Consumo Sócios", desc: "Retirada dos donos", icon: Users },
+  { key: "testeMkt", label: "Teste / Mkt", desc: "Degustação e fotos", icon: Package },
+  { key: "materialLimpeza", label: "Material de Limpeza", desc: "Detergente, cloro, etc.", icon: Package },
+  { key: "desperdicios", label: "Desperdícios", desc: "Queimas, erros", icon: Trash2 },
+]
+
+export function OutrosCustosDRE({ data, dataInicio, dataFim, onChange }: OutrosCustasProps) {
+  const [valores, setValores] = useState<Record<string, string>>({})
   const [salvando, setSalvando] = useState(false)
+  const [salvo, setSalvo] = useState(false)
 
-  const handleChange = (key: keyof OutrosCustos, val: string) => {
-    setSalvo(false)
-    onChange({
-      ...data,
-      outrosCustos: {
-        ...data.outrosCustos,
-        [key]: parseFloat(val.replace(",", ".")) || 0,
-      },
+  // Sincroniza quando os dados do banco carregam
+  useEffect(() => {
+    setValores({
+      embalagens: String(data.outrosCustos.embalagens || ""),
+      consumoInterno: String(data.outrosCustos.consumoInterno || ""),
+      consumoSocios: String(data.outrosCustos.consumoSocios || ""),
+      testeMkt: String(data.outrosCustos.testeMkt || ""),
+      materialLimpeza: String(data.outrosCustos.materialLimpeza || ""),
+      desperdicios: String(data.outrosCustos.desperdicios || "")
     })
-  }
+  }, [data.outrosCustos])
 
-  // ==========================================
-  // 2. FUNÇÃO QUE SALVA O DRE NO SUPABASE
-  // ==========================================
   const handleSalvar = async () => {
     setSalvando(true)
+    
+    // Deleta os dados antigos da semana
+    await supabase.from('financas_semanais').delete().eq('data_inicio', dataInicio).eq('data_fim', dataFim)
 
-    // Pega a data de hoje para preencher as datas obrigatórias da tabela
-    const dataHoje = new Date().toISOString().split('T')[0]
+    // Insere os novos
+    const { error } = await supabase.from('financas_semanais').insert([{
+      data_inicio: dataInicio,
+      data_fim: dataFim,
+      faturamento: data.faturamento, // Mantém o faturamento que já existia
+      embalagens: parseFloat(valores.embalagens.replace(",", ".")) || 0,
+      consumo_interno: parseFloat(valores.consumoInterno.replace(",", ".")) || 0,
+      consumo_socios: parseFloat(valores.consumoSocios.replace(",", ".")) || 0,
+      teste_mkt: parseFloat(valores.testeMkt.replace(",", ".")) || 0,
+      material_limpeza: parseFloat(valores.materialLimpeza.replace(",", ".")) || 0,
+      desperdicios: parseFloat(valores.desperdicios.replace(",", ".")) || 0
+    }])
 
-    // Envia os dados para a tabela 'financas_semanais'
-    const { error } = await supabase
-      .from('financas_semanais')
-      .insert([
-        {
-          data_inicio: dataHoje,
-          data_fim: dataHoje,
-          embalagens: data.outrosCustos.embalagens || 0,
-          consumo_interno: data.outrosCustos.consumoInterno || 0,
-          teste_mkt: data.outrosCustos.testeMkt || 0,
-          material_limpeza: data.outrosCustos.materialLimpeza || 0,
-          desperdicios: data.outrosCustos.desperdicios || 0
-        }
-      ])
-
-    if (error) {
-      alert("Erro ao gravar custos na base de dados: " + error.message)
-      setSalvando(false)
-      return
+    if (!error) {
+      setSalvo(true)
+      setTimeout(() => setSalvo(false), 2000)
+      onChange()
+    } else {
+      alert("Erro ao salvar: " + error.message)
     }
-
     setSalvando(false)
-    setSalvo(true)
-    setTimeout(() => setSalvo(false), 3000)
   }
 
-  const totalOutros = Object.values(data.outrosCustos).reduce((a, b) => a + b, 0)
-
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-6 pb-24">
       <div>
         <h2 className="text-2xl font-bold text-foreground mb-1">Outros Custos (DRE)</h2>
-        <p className="text-muted-foreground text-base">Custos operacionais da semana</p>
+        <p className="text-muted-foreground text-base">Registe os valores consumidos para abater no cálculo do CMV.</p>
       </div>
 
-      {/* Aviso de destaque */}
-      <div className="flex items-start gap-4 p-5 rounded-2xl border-2 border-amber-400 bg-amber-50">
-        <AlertTriangle className="w-7 h-7 text-amber-600 flex-shrink-0 mt-0.5" />
-        <div>
-          <p className="text-base font-extrabold text-amber-800">
-            Atenção: Estes gastos NÃO entram na conta do CMV.
-          </p>
-          <p className="text-sm text-amber-700 mt-1 leading-relaxed">
-            Servem apenas para o controlo de caixa (DRE). O CMV é calculado exclusivamente com os ingredientes e <strong>embalagens de pizza</strong> lançados em <strong>Compras (CMV)</strong>.
-          </p>
-        </div>
-      </div>
-
-      {/* Campos */}
-      <div className="bg-card rounded-2xl border border-border p-6 shadow-sm space-y-4">
-        <h3 className="text-xl font-bold text-foreground">Registar Valores da Semana</h3>
-
-        <div className="space-y-4">
-          {OUTROS_CAMPOS.map(({ key, label, sublabel, icon: Icon }) => (
-            <div key={key} className="flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-muted border border-border flex-shrink-0 hidden sm:block">
-                <Icon className="w-5 h-5 text-muted-foreground" />
-              </div>
-              <div className="w-40 sm:w-52 flex-shrink-0">
-                <p className="text-base font-semibold text-foreground leading-tight">{label}</p>
-                {sublabel && <p className="text-xs text-muted-foreground mt-0.5">{sublabel}</p>}
-              </div>
-              <div className="relative flex-1">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-base font-bold text-muted-foreground">
-                  R$
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={data.outrosCustos[key] > 0 ? data.outrosCustos[key] : ""}
-                  onChange={(e) => handleChange(key, e.target.value)}
-                  placeholder="0,00"
-                  className="w-full text-xl font-bold pl-12 pr-4 py-4 rounded-xl border-2 border-input bg-background focus:border-[#C0392B] focus:outline-none transition-colors"
-                />
-              </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {OUTROS_CAMPOS.map(({ key, label, desc, icon: Icon }) => (
+          <div key={key} className="bg-card rounded-2xl border-2 p-5 shadow-sm hover:border-[#C0392B]/50 transition-colors">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-muted rounded-xl text-muted-foreground"><Icon className="w-6 h-6" /></div>
+              <div><h4 className="font-bold text-foreground">{label}</h4><p className="text-xs text-muted-foreground">{desc}</p></div>
             </div>
-          ))}
-        </div>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-muted-foreground">R$</span>
+              <input 
+                type="number" min="0" step="0.01" placeholder="0,00"
+                value={valores[key] || ""}
+                onChange={(e) => setValores({ ...valores, [key]: e.target.value })}
+                className="w-full text-xl font-bold pl-12 pr-4 py-3 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none" 
+              />
+            </div>
+          </div>
+        ))}
+      </div>
 
-        {/* Total */}
-        <div className="flex items-center justify-between p-4 rounded-xl bg-muted border border-border mt-2">
-          <span className="text-base font-semibold text-muted-foreground">Total Outros Custos (DRE)</span>
-          <span className="text-2xl font-extrabold text-foreground">{formatBRL(totalOutros)}</span>
-        </div>
-
-        {/* Botão */}
-        <button
-          onClick={handleSalvar}
-          disabled={totalOutros === 0 || salvando}
-          className={`w-full flex items-center justify-center gap-3 text-xl font-bold py-5 px-6 rounded-xl text-white active:scale-[0.98] transition-all max-w-2xl mx-auto ${
-            salvando ? "bg-muted-foreground cursor-not-allowed" : 
-            salvo ? "bg-[#1E6B43]" : "bg-[#1E6B43] hover:bg-[#155233]"
-          } disabled:opacity-40 disabled:cursor-not-allowed`}
-        >
-          {salvando ? (
-            <span>A Guardar na Nuvem...</span>
-          ) : salvo ? (
-            <><CheckCircle2 className="w-6 h-6" /> Custos Registados!</>
-          ) : (
-            <><CheckCircle2 className="w-6 h-6" /> Registar Custos Operacionais</>
-          )}
+      <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 z-50">
+        <button onClick={handleSalvar} disabled={salvando} className={`flex items-center justify-center gap-3 text-xl font-extrabold py-5 px-8 rounded-2xl shadow-2xl w-full max-w-lg transition-all ${salvo ? "bg-[#1E6B43] text-white" : "bg-[#C0392B] text-white hover:bg-[#9B2B1F]"}`}>
+          {salvando ? "A Guardar..." : salvo ? <><CheckCircle2 className="w-7 h-7" /> Salvo com Sucesso!</> : <><ReceiptText className="w-7 h-7" /> Guardar Custos</>}
         </button>
       </div>
     </div>
