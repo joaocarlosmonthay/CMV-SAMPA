@@ -17,15 +17,15 @@ interface EstoqueProps {
   onSalvarInicial: (c: ContagemEstoque) => void
   onSalvarFinal: (c: ContagemEstoque) => void
   onPuxarAnterior: () => Promise<boolean>
+  onSemanaFechada?: () => void // <-- NOVA PROP PARA RESETAR A DATA
 }
 
-export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contagemFinal, onSalvarInicial, onSalvarFinal, onPuxarAnterior }: EstoqueProps) {
+export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contagemFinal, onSalvarInicial, onSalvarFinal, onPuxarAnterior, onSemanaFechada }: EstoqueProps) {
   const [tipo, setTipo] = useState<TipoContagem>("inicial")
   const [contagem, setContagem] = useState<ContagemEstoque>(tipo === "inicial" ? { ...contagemInicial } : { ...contagemFinal })
   const [salvo, setSalvo] = useState(false)
   const [salvando, setSalvando] = useState(false)
 
-  // MÁGICA: Extrai todas as categorias que existem nos produtos (Sem perder nenhuma!)
   const gruposDinamicos = Array.from(new Set(produtos.map((p) => p.grupo))).sort()
 
   const handleTipoChange = (t: TipoContagem) => {
@@ -62,12 +62,17 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
       return
     }
 
-    if (tipo === "inicial") onSalvarInicial({ ...contagem })
-    else onSalvarFinal({ ...contagem })
-    
-    setSalvando(false)
-    setSalvo(true)
-    setTimeout(() => setSalvo(false), 3000)
+    if (tipo === "inicial") {
+      onSalvarInicial({ ...contagem })
+      setSalvando(false)
+      setSalvo(true)
+      setTimeout(() => setSalvo(false), 3000)
+    } else {
+      // SE FOR A CONTAGEM FINAL, CHAMA A FUNÇÃO QUE ZERA AS DATAS!
+      onSalvarFinal({ ...contagem })
+      setSalvando(false)
+      if (onSemanaFechada) onSemanaFechada()
+    }
   }
 
   return (
@@ -104,7 +109,6 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
       )}
 
       <div className="space-y-5">
-        {/* Agora renderiza todos os grupos encontrados */}
         {gruposDinamicos.map((grupo) => {
           const lista = produtos.filter((p) => p.grupo === grupo)
           if (lista.length === 0) return null

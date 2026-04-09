@@ -1,10 +1,9 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { LayoutDashboard, ClipboardList, ShoppingCart, Package, Menu, X, Pizza, ReceiptText, LogOut, LineChart } from "lucide-react"
+import { LayoutDashboard, ClipboardList, ShoppingCart, Package, Menu, Pizza, ReceiptText, LogOut, LineChart, Lock, CalendarDays, Unlock } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
-// Importações blindadas
 import { Login } from "@/components/cmv/login"
 import { Dashboard } from "@/components/cmv/dashboard"
 import { Cadastros, type Produto } from "@/components/cmv/cadastros"
@@ -24,8 +23,14 @@ const getSeteDiasAtras = () => {
 function CMVApp() {
   const [tela, setTela] = useState<string>("dashboard")
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [dataInicio, setDataInicio] = useState(getSeteDiasAtras())
-  const [dataFim, setDataFim] = useState(getHoje())
+  
+  // As datas agora podem ficar vazias após o fechamento
+  const [dataInicio, setDataInicio] = useState<string>(getSeteDiasAtras())
+  const [dataFim, setDataFim] = useState<string>(getHoje())
+
+  // --- ESTADOS DA SENHA MASTER ---
+  const [semanaDesbloqueada, setSemanaDesbloqueada] = useState(false)
+  const [senhaInput, setSenhaInput] = useState("")
 
   const [produtos, setProdutos] = useState<Produto[]>([])
   const [lancamentos, setLancamentos] = useState<any>({
@@ -36,33 +41,26 @@ function CMVApp() {
   const [precosReferencia, setPrecosReferencia] = useState<Record<string, number>>({})
 
   const carregarDadosDoBanco = async () => {
+    // Se as datas estiverem vazias, limpa a tela e não busca no banco
+    if (!dataInicio || !dataFim) {
+        setLancamentos({ faturamento: 0, compras: [], outrosCustos: { embalagens: 0, consumoInterno: 0, consumoSocios: 0, testeMkt: 0, materialLimpeza: 0, desperdicios: 0 } })
+        setContagemInicial({})
+        setContagemFinal({})
+        return
+    }
+
     const { data: gData } = await supabase.from('grupos').select('*')
     const tradutorGrupos: Record<number, string> = {}
     if (gData) gData.forEach(g => { tradutorGrupos[g.id] = g.nome })
 
     const { data: pData } = await supabase.from('produtos').select('*').order('nome')
     if (pData) {
-      setProdutos(pData.map(p => ({ 
-        id: p.id,
-        nome: p.nome, 
-        unidade: p.unidade_medida, 
-        grupo: tradutorGrupos[p.grupo_id] || "Outros" 
-      })))
+      setProdutos(pData.map(p => ({ id: p.id, nome: p.nome, unidade: p.unidade_medida, grupo: tradutorGrupos[p.grupo_id] || "Outros" })))
     }
 
     const { data: cData } = await supabase.from('compras').select('*, produtos(nome)').gte('data_compra', dataInicio).lte('data_compra', dataFim)
     if (cData) {
-      setLancamentos((prev: any) => ({ 
-        ...prev, 
-        compras: cData.map(c => ({ 
-          id: c.id, 
-          produto: c.produtos?.nome || "Desconhecido", 
-          quantidade: c.quantidade, 
-          valorUnitario: c.valor_unitario, 
-          valorTotal: c.valor_total,
-          data_compra: c.data_compra 
-        }))
-      }))
+      setLancamentos((prev: any) => ({ ...prev, compras: cData.map(c => ({ id: c.id, produto: c.produtos?.nome || "Desconhecido", quantidade: c.quantidade, valorUnitario: c.valor_unitario, valorTotal: c.valor_total, data_compra: c.data_compra }))}))
     }
 
     const { data: precosData } = await supabase.from('compras').select('produto_id, valor_unitario').order('data_compra', { ascending: false })
@@ -90,7 +88,12 @@ function CMVApp() {
     }
   }
 
-  useEffect(() => { carregarDadosDoBanco() }, [dataInicio, dataFim])
+  // Se a data mudar, tranca tudo de novo e carrega os dados
+  useEffect(() => { 
+    carregarDadosDoBanco() 
+    setSemanaDesbloqueada(false)
+    setSenhaInput("")
+  }, [dataInicio, dataFim])
 
   const handleSalvarProdutoNoBanco = async (p: Produto) => {
     const { data: gData } = await supabase.from('grupos').select('id').eq('nome', p.grupo).single()
@@ -109,6 +112,20 @@ function CMVApp() {
     }
     return false
   }
+
+  const handleDesbloquear = () => {
+    if (senhaInput === "1179") {
+      setSemanaDesbloqueada(true)
+    } else {
+      alert("❌ Senha Incorreta! Acesso Negado.")
+      setSenhaInput("")
+    }
+  }
+
+  // --- LÓGICAS DE SEGURANÇA ---
+  const isSemanaFechada = Object.keys(contagemFinal).length > 0
+  const precisaDeSenha = isSemanaFechada && !semanaDesbloqueada && ["compras", "outros-custos", "estoque"].includes(tela)
+  const datasEstaoVazias = !dataInicio || !dataFim
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -131,6 +148,10 @@ function CMVApp() {
               className={`w-full flex items-center gap-4 px-5 py-4 rounded-xl font-bold transition-all ${tela === item.id ? "bg-[#FACC15] text-[#1E3A8A] shadow-lg scale-105" : "text-white/80 hover:bg-white/10"}`}
             >
               <item.icon /> {item.label}
+              {/* Mostra um cadeado nas abas bloqueadas */}
+              {isSemanaFechada && !semanaDesbloqueada && ["compras", "outros-custos", "estoque"].includes(item.id) && (
+                <Lock className="w-4 h-4 ml-auto opacity-50" />
+              )}
             </button>
           ))}
         </nav>
@@ -144,19 +165,77 @@ function CMVApp() {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-30 bg-white border-b px-6 py-4 flex items-center justify-between shadow-sm">
           <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-[#1E3A8A] border rounded-lg"><Menu /></button>
-          <div className="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-xl border-2 border-blue-100">
-            <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="bg-transparent font-black text-[#1E3A8A] text-sm outline-none cursor-pointer" />
-            <span className="text-blue-300 font-bold">➔</span>
-            <input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="bg-transparent font-black text-[#1E3A8A] text-sm outline-none cursor-pointer" />
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 transition-colors ${isSemanaFechada ? "bg-red-50 border-red-200" : datasEstaoVazias ? "bg-amber-50 border-amber-200" : "bg-blue-50 border-blue-100"}`}>
+            <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className={`bg-transparent font-black text-sm outline-none cursor-pointer ${isSemanaFechada ? "text-red-700" : "text-[#1E3A8A]"}`} />
+            <span className="opacity-50 font-bold">➔</span>
+            <input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className={`bg-transparent font-black text-sm outline-none cursor-pointer ${isSemanaFechada ? "text-red-700" : "text-[#1E3A8A]"}`} />
+            {isSemanaFechada && <Lock className="w-4 h-4 text-red-500 ml-2" />}
           </div>
         </header>
         <main className="flex-1 p-4 md:p-8 overflow-y-auto bg-slate-50">
-          {tela === "dashboard" && <Dashboard dataInicio={dataInicio} dataFim={dataFim} lancamentos={lancamentos} contagemInicial={contagemInicial} contagemFinal={contagemFinal} produtos={produtos} precosReferencia={precosReferencia} onChangeFaturamento={carregarDadosDoBanco} />}
-          {tela === "cadastros" && <Cadastros produtos={produtos} onAddProduto={handleSalvarProdutoNoBanco} />}
-          {tela === "compras" && <ComprasCMV produtos={produtos} data={lancamentos} onChange={carregarDadosDoBanco} />}
-          {tela === "outros-custos" && <OutrosCustosDRE data={lancamentos} dataInicio={dataInicio} dataFim={dataFim} onChange={carregarDadosDoBanco} />}
-          {tela === "estoque" && <Estoque dataInicio={dataInicio} dataFim={dataFim} produtos={produtos} contagemInicial={contagemInicial} contagemFinal={contagemFinal} onSalvarInicial={carregarDadosDoBanco} onSalvarFinal={carregarDadosDoBanco} onPuxarAnterior={handlePuxarEstoqueAnterior} />}
-          {tela === "relatorios" && <Relatorios produtos={produtos} />}
+          
+          {/* REGRA 1: SE AS DATAS ESTÃO VAZIAS (Reset Pós-Fechamento) */}
+          {datasEstaoVazias ? (
+            <div className="flex flex-col items-center justify-center h-[70vh] text-center animate-in fade-in zoom-in">
+               <CalendarDays className="w-24 h-24 text-amber-400 mb-6 drop-shadow-md" />
+               <h2 className="text-3xl font-black text-[#1E3A8A] mb-2">Pronto para começar! 🚀</h2>
+               <p className="text-lg text-slate-500 max-w-md font-medium">Selecione a data de Início e Fim no calendário acima para iniciar os lançamentos da nova semana.</p>
+            </div>
+          ) 
+          
+          /* REGRA 2: SE A SEMANA ESTÁ FECHADA E A TELA É RESTRITA (Pede Senha) */
+          : precisaDeSenha ? (
+             <div className="flex flex-col items-center justify-center h-[70vh] animate-in fade-in zoom-in duration-300">
+               <div className="bg-white p-8 rounded-3xl border-2 border-red-100 shadow-xl text-center max-w-md w-full">
+                 <div className="mx-auto w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                   <Lock className="w-10 h-10" />
+                 </div>
+                 <h2 className="text-2xl font-black text-slate-800 mb-2">Semana Fechada 🔒</h2>
+                 <p className="text-slate-500 mb-8 font-medium">A contagem final desta semana já foi registada. Digite a senha master para desbloquear a edição.</p>
+                 
+                 <input 
+                   type="password" 
+                   value={senhaInput}
+                   onChange={e => setSenhaInput(e.target.value)}
+                   placeholder="****"
+                   className="w-full text-center text-3xl tracking-[1em] font-black px-4 py-4 rounded-xl border-2 bg-slate-50 focus:border-red-500 outline-none mb-6"
+                 />
+                 <button onClick={handleDesbloquear} className="w-full flex items-center justify-center gap-2 py-4 bg-red-600 hover:bg-red-700 text-white font-black text-lg rounded-xl transition-all shadow-md">
+                   <Unlock className="w-5 h-5" /> Desbloquear Edição
+                 </button>
+               </div>
+             </div>
+          ) 
+          
+          /* REGRA 3: O CAMINHO LIVRE (Renderiza os componentes) */
+          : (
+            <>
+              {tela === "dashboard" && <Dashboard dataInicio={dataInicio} dataFim={dataFim} lancamentos={lancamentos} contagemInicial={contagemInicial} contagemFinal={contagemFinal} produtos={produtos} precosReferencia={precosReferencia} onChangeFaturamento={carregarDadosDoBanco} />}
+              {tela === "cadastros" && <Cadastros produtos={produtos} onAddProduto={handleSalvarProdutoNoBanco} />}
+              {tela === "compras" && <ComprasCMV produtos={produtos} data={lancamentos} onChange={carregarDadosDoBanco} />}
+              {tela === "outros-custos" && <OutrosCustosDRE data={lancamentos} dataInicio={dataInicio} dataFim={dataFim} onChange={carregarDadosDoBanco} />}
+              {tela === "relatorios" && <Relatorios produtos={produtos} />}
+              {tela === "estoque" && (
+                <Estoque 
+                  dataInicio={dataInicio} 
+                  dataFim={dataFim} 
+                  produtos={produtos} 
+                  contagemInicial={contagemInicial} 
+                  contagemFinal={contagemFinal} 
+                  onSalvarInicial={carregarDadosDoBanco} 
+                  onSalvarFinal={carregarDadosDoBanco} 
+                  onPuxarAnterior={handlePuxarEstoqueAnterior}
+                  /* A MÁGICA DO RESET DE DATAS ESTÁ AQUI! */
+                  onSemanaFechada={() => {
+                     alert("✅ Semana fechada com sucesso! O sistema foi zerado para a próxima semana.")
+                     setDataInicio("")
+                     setDataFim("")
+                     setTela("dashboard")
+                  }}
+                />
+              )}
+            </>
+          )}
         </main>
       </div>
     </div>
