@@ -1,11 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { ClipboardCheck, CheckCircle2, Package } from "lucide-react"
 import type { Produto } from "./cadastros"
 import { supabase } from "@/lib/supabase"
-
-const GRUPOS = ["Massas", "Laticínios", "Carnes", "Hortifruti", "Outros"]
 
 type TipoContagem = "inicial" | "final"
 export type ContagemEstoque = Record<number, string>
@@ -27,6 +25,9 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
   const [salvo, setSalvo] = useState(false)
   const [salvando, setSalvando] = useState(false)
 
+  // MÁGICA: Extrai todas as categorias que existem nos produtos (Sem perder nenhuma!)
+  const gruposDinamicos = Array.from(new Set(produtos.map((p) => p.grupo))).sort()
+
   const handleTipoChange = (t: TipoContagem) => {
     setTipo(t)
     setSalvo(false)
@@ -45,7 +46,7 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
         produto_id: parseInt(id),
         tipo_contagem: tipo === "inicial" ? "Inicial" : "Final",
         quantidade: parseFloat(val.replace(",", ".")),
-        data_contagem: tipo === "inicial" ? dataInicio : dataFim // Guarda com a data correta do fecho
+        data_contagem: tipo === "inicial" ? dataInicio : dataFim
       }))
 
     if (itensParaSalvar.length === 0) {
@@ -77,10 +78,10 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <button onClick={() => handleTipoChange("inicial")} className={`flex flex-col items-center justify-center gap-1.5 py-5 px-4 rounded-2xl border-2 font-bold transition-all ${tipo === "inicial" ? "border-[#C0392B] bg-[#C0392B] text-white" : "border-border bg-card"}`}>
+        <button onClick={() => handleTipoChange("inicial")} className={`flex flex-col items-center justify-center gap-1.5 py-5 px-4 rounded-2xl border-2 font-bold transition-all ${tipo === "inicial" ? "border-[#2563EB] bg-[#2563EB] text-white" : "border-border bg-card"}`}>
           <ClipboardCheck className="w-7 h-7" /><span>Contagem Inicial</span>
         </button>
-        <button onClick={() => handleTipoChange("final")} className={`flex flex-col items-center justify-center gap-1.5 py-5 px-4 rounded-2xl border-2 font-bold transition-all ${tipo === "final" ? "border-[#1E6B43] bg-[#1E6B43] text-white" : "border-border bg-card"}`}>
+        <button onClick={() => handleTipoChange("final")} className={`flex flex-col items-center justify-center gap-1.5 py-5 px-4 rounded-2xl border-2 font-bold transition-all ${tipo === "final" ? "border-[#FACC15] bg-[#FACC15] text-[#1E3A8A]" : "border-border bg-card"}`}>
           <ClipboardCheck className="w-7 h-7" /><span>Contagem Final</span>
         </button>
       </div>
@@ -91,7 +92,6 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
             const sucesso = await onPuxarAnterior()
             if (sucesso) {
                 alert("Estoque inicial preenchido com o fechamento da semana passada! 🧀")
-                // Atualiza os inputs na hora
                 handleTipoChange("inicial") 
             } else {
                 alert("Não encontrámos nenhum stock final registado antes desta data.")
@@ -104,20 +104,22 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
       )}
 
       <div className="space-y-5">
-        {GRUPOS.map((grupo) => {
+        {/* Agora renderiza todos os grupos encontrados */}
+        {gruposDinamicos.map((grupo) => {
           const lista = produtos.filter((p) => p.grupo === grupo)
           if (lista.length === 0) return null
+          
           return (
-            <div key={grupo} className="bg-card rounded-2xl border overflow-hidden">
-              <div className="px-6 py-4 flex items-center gap-2" style={{ backgroundColor: tipo === "inicial" ? "#C0392B" : "#1E6B43" }}>
-                <h3 className="text-lg font-bold text-white">{grupo}</h3>
+            <div key={grupo} className="bg-card rounded-2xl border overflow-hidden shadow-sm">
+              <div className="px-6 py-4 flex items-center gap-2" style={{ backgroundColor: tipo === "inicial" ? "#2563EB" : "#FACC15", color: tipo === "inicial" ? "#ffffff" : "#1E3A8A" }}>
+                <h3 className="text-lg font-bold">{grupo}</h3>
               </div>
               <ul className="divide-y divide-border">
                 {lista.map((produto) => (
                   <li key={produto.id} className="grid grid-cols-[1fr_72px_140px] gap-3 items-center px-5 py-4">
                     <span className="text-base font-semibold">{produto.nome}</span>
                     <span className="text-sm text-muted-foreground bg-muted px-2 py-1 rounded-full text-center">{produto.unidade}</span>
-                    <input type="number" min="0" step="0.01" value={contagem[Number(produto.id)] ?? ""} onChange={(e) => handleChange(Number(produto.id), e.target.value)} placeholder="0" className="w-full text-xl font-bold text-center px-3 py-3 rounded-xl border-2 bg-background" />
+                    <input type="number" min="0" step="0.001" value={contagem[Number(produto.id)] ?? ""} onChange={(e) => handleChange(Number(produto.id), e.target.value)} placeholder="0" className="w-full text-xl font-bold text-center px-3 py-3 rounded-xl border-2 bg-background focus:border-[#2563EB] outline-none transition-colors" />
                   </li>
                 ))}
               </ul>
@@ -127,10 +129,10 @@ export function Estoque({ dataInicio, dataFim, produtos, contagemInicial, contag
       </div>
 
       <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 z-50">
-        <button onClick={handleSalvar} disabled={salvando} className={`flex items-center justify-center gap-3 text-xl font-extrabold py-5 px-8 rounded-2xl shadow-2xl w-full max-w-lg ${salvo ? "bg-[#1E6B43] text-white" : tipo === "inicial" ? "bg-[#C0392B] text-white" : "bg-[#1E6B43] text-white"} ${salvando ? "opacity-70" : ""}`}>
+        <button onClick={handleSalvar} disabled={salvando} className={`flex items-center justify-center gap-3 text-xl font-extrabold py-5 px-8 rounded-2xl shadow-2xl w-full max-w-lg ${salvo ? "bg-[#FACC15] text-[#1E3A8A]" : tipo === "inicial" ? "bg-[#2563EB] text-white" : "bg-[#FACC15] text-[#1E3A8A]"} ${salvando ? "opacity-70 cursor-not-allowed" : ""}`}>
           {salvando ? <span>A Guardar...</span> : salvo ? <><CheckCircle2 className="w-7 h-7" /> Salvo!</> : <><ClipboardCheck className="w-7 h-7" /> Salvar Contagem</>}
         </button>
       </div>
     </div>
   )
-} 
+}
