@@ -82,7 +82,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
   }
 
   // ============================================================================
-  // IMPORTADOR DE CSV PARA ESTOQUE INICIAL
+  // IMPORTADOR DE CSV PARA ESTOQUE INICIAL (AGORA BLINDADO CONTRA \r\n)
   // ============================================================================
   const handleImportarCSVEstoqueInicial = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -94,7 +94,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
       try {
         const text = event.target?.result as string
         const delimitador = text.includes(';') ? ';' : ','
-        const rows = text.split('\n').map(row => row.split(delimitador))
+        const rows = text.split(/\r?\n/).map(row => row.split(delimitador))
 
         const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
         const prodIdx = headers.indexOf('produto_id')
@@ -113,13 +113,14 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
         for (let i = 1; i < rows.length; i++) {
           if (!rows[i] || rows[i].length < 2) continue
 
-          const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '') : 'Inicial'
-          // Se tiver a coluna tipo e não for Inicial, ignora
+          // O .trim() remove os Enters e espaços invisíveis
+          const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '').trim() : 'Inicial'
+          
           if (tipoIdx !== -1 && tipo !== 'Inicial') continue
 
-          const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, ''))
-          const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, ''))
-          const vu = valorIdx !== -1 ? parseFloat(rows[i][valorIdx]?.replace(/"/g, '')) : 0
+          const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, '').trim())
+          const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, '').trim())
+          const vu = valorIdx !== -1 ? parseFloat(rows[i][valorIdx]?.replace(/"/g, '').trim()) : 0
 
           if (!isNaN(pId) && !isNaN(qtd)) {
             novaContagem[pId] = {
@@ -147,7 +148,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
   }
 
   // ============================================================================
-  // IMPORTADOR DE CSV PARA O ESTOQUE FINAL
+  // IMPORTADOR DE CSV PARA O ESTOQUE FINAL (AGORA BLINDADO CONTRA \r\n)
   // ============================================================================
   const handleImportarCSVEstoqueFinal = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -159,7 +160,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
       try {
         const text = event.target?.result as string
         const delimitador = text.includes(';') ? ';' : ','
-        const rows = text.split('\n').map(row => row.split(delimitador))
+        const rows = text.split(/\r?\n/).map(row => row.split(delimitador))
 
         const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
         const prodIdx = headers.indexOf('produto_id')
@@ -178,12 +179,13 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
         for (let i = 1; i < rows.length; i++) {
           if (!rows[i] || rows[i].length < 2) continue
 
-          const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '') : 'Final'
+          const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '').trim() : 'Final'
+          
           if (tipo !== 'Final') continue
 
-          const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, ''))
-          const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, ''))
-          const vu = valorIdx !== -1 ? parseFloat(rows[i][valorIdx]?.replace(/"/g, '')) : 0
+          const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, '').trim())
+          const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, '').trim())
+          const vu = valorIdx !== -1 ? parseFloat(rows[i][valorIdx]?.replace(/"/g, '').trim()) : 0
 
           if (!isNaN(pId) && !isNaN(qtd)) {
             novaContagem[pId] = {
@@ -223,7 +225,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
       try {
         const text = event.target?.result as string
         const delimitador = text.includes(';') ? ';' : ','
-        const rows = text.split('\n').map(row => row.split(delimitador))
+        const rows = text.split(/\r?\n/).map(row => row.split(delimitador))
 
         const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
         const prodIdx = headers.indexOf('produto_id')
@@ -238,9 +240,9 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
         const comprasParaInserir = []
         for (let i = 1; i < rows.length; i++) {
           if (!rows[i] || rows[i].length < 3) continue
-          const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, ''))
-          const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, ''))
-          const vu = parseFloat(rows[i][valIdx]?.replace(/"/g, ''))
+          const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, '').trim())
+          const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, '').trim())
+          const vu = parseFloat(rows[i][valIdx]?.replace(/"/g, '').trim())
 
           if (!isNaN(pId) && !isNaN(qtd) && !isNaN(vu)) {
             comprasParaInserir.push({ produto_id: pId, quantidade: qtd, valor_unitario: vu, data_compra: dataInicio })
