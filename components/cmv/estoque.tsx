@@ -7,20 +7,23 @@ import { supabase } from "@/lib/supabase"
 
 const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 
+// AQUI ESTÁ O TIPO QUE O NEXT.JS ESTAVA A PEDIR!
+export type ContagemEstoque = Record<number, { qtd: string; valor: string }>
+
 interface EstoqueProps {
   dataInicio: string
   dataFim: string
   produtos: Produto[]
   data: any
-  contagemInicial: Record<number, { qtd: string; valor: string }>
-  contagemFinal: Record<number, { qtd: string; valor: string }>
+  contagemInicial: ContagemEstoque
+  contagemFinal: ContagemEstoque
   onChange: () => void
   onSemanaFechada: () => void
 }
 
 export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, contagemFinal, onChange, onSemanaFechada }: EstoqueProps) {
   const [aba, setAba] = useState<"inicial" | "compras" | "saidas" | "faturamento" | "final">("inicial")
-  const [contagem, setContagem] = useState<Record<number, { qtd: string; valor: string }>>({})
+  const [contagem, setContagem] = useState<ContagemEstoque>({})
   const [salvando, setSalvando] = useState(false)
   const [salvo, setSalvo] = useState(false)
   const [importando, setImportando] = useState(false)
@@ -81,161 +84,96 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
     } else { alert("❌ Nenhum estoque anterior encontrado.") }
   }
 
+  // AQUI ESTÁ A FUNÇÃO DA LIXEIRA DE COMPRAS E SAÍDAS
+  const handleDeletarRegistro = async (tabela: string, id: number) => {
+    if (!window.confirm("Apagar este registro permanentemente?")) return
+    const { error } = await supabase.from(tabela).delete().eq('id', id)
+    if (error) alert("Erro ao apagar: " + error.message)
+    else onChange()
+  }
+
   // ============================================================================
-  // IMPORTADOR DE CSV PARA ESTOQUE INICIAL (AGORA BLINDADO CONTRA \r\n)
+  // IMPORTADORES CSV
   // ============================================================================
   const handleImportarCSVEstoqueInicial = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     setImportando(true)
     const reader = new FileReader()
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string
-        const delimitador = text.includes(';') ? ';' : ','
-        const rows = text.split(/\r?\n/).map(row => row.split(delimitador))
-
+        const rows = text.split(/\r?\n/).map(row => row.split(text.includes(';') ? ';' : ','))
         const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
-        const prodIdx = headers.indexOf('produto_id')
-        const qtdIdx = headers.indexOf('quantidade')
-        const valorIdx = headers.indexOf('valor_unitario')
-        const tipoIdx = headers.indexOf('tipo_contagem')
+        const prodIdx = headers.indexOf('produto_id'); const qtdIdx = headers.indexOf('quantidade'); const valorIdx = headers.indexOf('valor_unitario'); const tipoIdx = headers.indexOf('tipo_contagem')
 
-        if (prodIdx === -1 || qtdIdx === -1) {
-          alert("❌ CSV inválido! Faltam as colunas produto_id e quantidade.")
-          setImportando(false); return
-        }
+        if (prodIdx === -1 || qtdIdx === -1) { alert("❌ CSV inválido!"); setImportando(false); return }
 
-        const novaContagem: Record<number, { qtd: string; valor: string }> = { ...contagem }
+        const novaContagem: ContagemEstoque = { ...contagem }
         let importados = 0
-
         for (let i = 1; i < rows.length; i++) {
           if (!rows[i] || rows[i].length < 2) continue
-
-          // O .trim() remove os Enters e espaços invisíveis
           const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '').trim() : 'Inicial'
-          
           if (tipoIdx !== -1 && tipo !== 'Inicial') continue
 
           const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, '').trim())
           const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, '').trim())
           const vu = valorIdx !== -1 ? parseFloat(rows[i][valorIdx]?.replace(/"/g, '').trim()) : 0
 
-          if (!isNaN(pId) && !isNaN(qtd)) {
-            novaContagem[pId] = {
-              qtd: qtd.toString(),
-              valor: isNaN(vu) || vu === 0 ? "" : vu.toString()
-            }
-            importados++
-          }
+          if (!isNaN(pId) && !isNaN(qtd)) { novaContagem[pId] = { qtd: qtd.toString(), valor: isNaN(vu) || vu === 0 ? "" : vu.toString() }; importados++ }
         }
-
-        if (importados === 0) {
-           alert("Nenhuma contagem 'Inicial' encontrada neste arquivo.")
-        } else {
-           setContagem(novaContagem)
-           alert(`✅ Sucesso! ${importados} produtos foram preenchidos no Estoque Inicial. Confira os números e clique em "Guardar" para salvar!`)
-        }
-      } catch (error: any) {
-        alert("Erro ao importar: " + error.message)
-      } finally {
-        setImportando(false)
-        e.target.value = '' 
-      }
+        if (importados > 0) { setContagem(novaContagem); alert(`✅ Sucesso! ${importados} produtos lidos.`) }
+      } catch (error: any) { alert("Erro ao importar: " + error.message) } finally { setImportando(false); e.target.value = '' }
     }
     reader.readAsText(file)
   }
 
-  // ============================================================================
-  // IMPORTADOR DE CSV PARA O ESTOQUE FINAL (AGORA BLINDADO CONTRA \r\n)
-  // ============================================================================
   const handleImportarCSVEstoqueFinal = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     setImportando(true)
     const reader = new FileReader()
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string
-        const delimitador = text.includes(';') ? ';' : ','
-        const rows = text.split(/\r?\n/).map(row => row.split(delimitador))
-
+        const rows = text.split(/\r?\n/).map(row => row.split(text.includes(';') ? ';' : ','))
         const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
-        const prodIdx = headers.indexOf('produto_id')
-        const qtdIdx = headers.indexOf('quantidade')
-        const valorIdx = headers.indexOf('valor_unitario')
-        const tipoIdx = headers.indexOf('tipo_contagem')
+        const prodIdx = headers.indexOf('produto_id'); const qtdIdx = headers.indexOf('quantidade'); const valorIdx = headers.indexOf('valor_unitario'); const tipoIdx = headers.indexOf('tipo_contagem')
 
-        if (prodIdx === -1 || qtdIdx === -1) {
-          alert("❌ CSV inválido! Faltam as colunas produto_id e quantidade.")
-          setImportando(false); return
-        }
+        if (prodIdx === -1 || qtdIdx === -1) { alert("❌ CSV inválido!"); setImportando(false); return }
 
-        const novaContagem: Record<number, { qtd: string; valor: string }> = { ...contagem }
+        const novaContagem: ContagemEstoque = { ...contagem }
         let importados = 0
-
         for (let i = 1; i < rows.length; i++) {
           if (!rows[i] || rows[i].length < 2) continue
-
           const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '').trim() : 'Final'
-          
           if (tipo !== 'Final') continue
 
           const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, '').trim())
           const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, '').trim())
           const vu = valorIdx !== -1 ? parseFloat(rows[i][valorIdx]?.replace(/"/g, '').trim()) : 0
 
-          if (!isNaN(pId) && !isNaN(qtd)) {
-            novaContagem[pId] = {
-              qtd: qtd.toString(),
-              valor: isNaN(vu) || vu === 0 ? "" : vu.toString()
-            }
-            importados++
-          }
+          if (!isNaN(pId) && !isNaN(qtd)) { novaContagem[pId] = { qtd: qtd.toString(), valor: isNaN(vu) || vu === 0 ? "" : vu.toString() }; importados++ }
         }
-
-        if (importados === 0) {
-           alert("Nenhuma contagem 'Final' encontrada neste arquivo.")
-        } else {
-           setContagem(novaContagem)
-           alert(`✅ Sucesso! ${importados} produtos foram preenchidos na tela. Confira os números e clique em "Fechar Semana" para salvar!`)
-        }
-      } catch (error: any) {
-        alert("Erro ao importar: " + error.message)
-      } finally {
-        setImportando(false)
-        e.target.value = '' 
-      }
+        if (importados > 0) { setContagem(novaContagem); alert(`✅ Sucesso! ${importados} produtos lidos.`) }
+      } catch (error: any) { alert("Erro ao importar: " + error.message) } finally { setImportando(false); e.target.value = '' }
     }
     reader.readAsText(file)
   }
 
-  // ============================================================================
-  // IMPORTADOR DE CSV PARA COMPRAS
-  // ============================================================================
   const handleImportarCSVCompras = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     setImportando(true)
     const reader = new FileReader()
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string
-        const delimitador = text.includes(';') ? ';' : ','
-        const rows = text.split(/\r?\n/).map(row => row.split(delimitador))
-
+        const rows = text.split(/\r?\n/).map(row => row.split(text.includes(';') ? ';' : ','))
         const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
-        const prodIdx = headers.indexOf('produto_id')
-        const qtdIdx = headers.indexOf('quantidade')
-        const valIdx = headers.indexOf('valor_unitario')
+        const prodIdx = headers.indexOf('produto_id'); const qtdIdx = headers.indexOf('quantidade'); const valIdx = headers.indexOf('valor_unitario')
 
-        if (prodIdx === -1 || qtdIdx === -1 || valIdx === -1) {
-          alert("❌ CSV inválido! Faltam colunas: produto_id, quantidade ou valor_unitario")
-          setImportando(false); return
-        }
+        if (prodIdx === -1 || qtdIdx === -1 || valIdx === -1) { alert("❌ CSV inválido!"); setImportando(false); return }
 
         const comprasParaInserir = []
         for (let i = 1; i < rows.length; i++) {
@@ -243,39 +181,25 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
           const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, '').trim())
           const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, '').trim())
           const vu = parseFloat(rows[i][valIdx]?.replace(/"/g, '').trim())
-
-          if (!isNaN(pId) && !isNaN(qtd) && !isNaN(vu)) {
-            comprasParaInserir.push({ produto_id: pId, quantidade: qtd, valor_unitario: vu, data_compra: dataInicio })
-          }
+          if (!isNaN(pId) && !isNaN(qtd) && !isNaN(vu)) comprasParaInserir.push({ produto_id: pId, quantidade: qtd, valor_unitario: vu, data_compra: dataInicio })
         }
-
-        if (comprasParaInserir.length === 0) { alert("Nenhuma compra encontrada."); setImportando(false); return }
-
-        const { error } = await supabase.from('compras').insert(comprasParaInserir)
-        if (error) throw error
-
-        alert(`✅ Sucesso! ${comprasParaInserir.length} compras foram importadas.`)
-        onChange()
-      } catch (error: any) { alert("Erro ao importar: " + error.message) } 
-      finally { setImportando(false); e.target.value = '' }
+        if (comprasParaInserir.length > 0) { await supabase.from('compras').insert(comprasParaInserir); alert(`✅ Sucesso! ${comprasParaInserir.length} compras importadas.`); onChange() }
+      } catch (error: any) { alert("Erro ao importar: " + error.message) } finally { setImportando(false); e.target.value = '' }
     }
     reader.readAsText(file)
   }
 
+  // ============================================================================
+  // FUNÇÕES DE REGISTO MANUAL
+  // ============================================================================
   const handleRegistrarCompra = async () => {
-    const qtd = parseFloat(compraQtd.replace(",", ".")) || 0
-    const vu = parseFloat(compraValor.replace(",", ".")) || 0
+    const qtd = parseFloat(compraQtd.replace(",", ".")) || 0; const vu = parseFloat(compraValor.replace(",", ".")) || 0
     if (!compraProd || qtd <= 0 || vu <= 0) return
     setSalvando(true)
     const { error } = await supabase.from('compras').insert([{ produto_id: parseInt(compraProd), quantidade: qtd, valor_unitario: vu, data_compra: dataInicio }])
     if (error) alert("Erro: " + error.message)
     else { setCompraProd(""); setCompraQtd(""); setCompraValor(""); onChange() }
     setSalvando(false)
-  }
-
-  const handleDeletarRegistro = async (tabela: string, id: number) => {
-    if (!window.confirm("Apagar este registro?")) return
-    await supabase.from(tabela).delete().eq('id', id); onChange()
   }
 
   const handleRegistrarSaida = async () => {
@@ -292,13 +216,9 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
     setSalvando(true)
     const fat = parseFloat(faturamentoInput.replace(",", ".")) || 0
     const { data: fData } = await supabase.from('financas_semanais').select('id').eq('data_inicio', dataInicio).eq('data_fim', dataFim).maybeSingle()
-    let error;
-    if (fData) { const res = await supabase.from('financas_semanais').update({ faturamento: fat }).eq('id', fData.id); error = res.error } 
-    else { const res = await supabase.from('financas_semanais').insert([{ data_inicio: dataInicio, data_fim: dataFim, faturamento: fat }]); error = res.error }
-
-    if (error) alert("Erro: " + error.message)
-    else { setSalvo(true); setTimeout(() => setSalvo(false), 2000); onChange() }
-    setSalvando(false)
+    if (fData) await supabase.from('financas_semanais').update({ faturamento: fat }).eq('id', fData.id)
+    else await supabase.from('financas_semanais').insert([{ data_inicio: dataInicio, data_fim: dataFim, faturamento: fat }])
+    setSalvo(true); setTimeout(() => setSalvo(false), 2000); setSalvando(false); onChange()
   }
 
   return (
@@ -331,7 +251,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
              <div className="flex flex-wrap gap-2">
                {aba === "inicial" && (<button onClick={handlePuxarAnterior} className="px-4 py-2 bg-blue-100 text-blue-800 rounded-lg font-bold text-sm hover:bg-blue-200 border border-blue-300 shadow-sm flex items-center gap-2 transition-all"><Package className="w-4 h-4"/> Puxar Anterior</button>)}
                
-               {/* BOTÃO MÁGICO DE IMPORTAÇÃO PARA ESTOQUE INICIAL */}
                {aba === "inicial" && (
                  <div>
                    <input type="file" accept=".csv" id="csv-estoque-inicial" className="hidden" onChange={handleImportarCSVEstoqueInicial} disabled={importando} />
@@ -341,7 +260,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
                  </div>
                )}
 
-               {/* BOTÃO MÁGICO DE IMPORTAÇÃO PARA ESTOQUE FINAL */}
                {aba === "final" && (
                  <div>
                    <input type="file" accept=".csv" id="csv-estoque-final" className="hidden" onChange={handleImportarCSVEstoqueFinal} disabled={importando} />
@@ -403,6 +321,8 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
               </div>
               <button onClick={handleRegistrarCompra} disabled={salvando || !compraProd} className="w-full py-4 rounded-xl bg-emerald-600 text-white font-bold text-lg hover:bg-emerald-700 disabled:opacity-50">Registar Compra</button>
            </div>
+           
+           {/* TABELA DE COMPRAS COM A LIXEIRA CORRIGIDA */}
            {data.compras && data.compras.length > 0 && (
              <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
                <div className="px-5 py-3 bg-slate-50 border-b font-bold text-slate-700">Compras Lançadas</div>
@@ -424,6 +344,8 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
               </div>
               <button onClick={handleRegistrarSaida} disabled={salvando || !saidaProd || !saidaMotivo} className="w-full py-4 rounded-xl bg-amber-500 text-white font-bold text-lg hover:bg-amber-600 disabled:opacity-50">Registar Saída</button>
            </div>
+           
+           {/* TABELA DE SAÍDAS COM A LIXEIRA CORRIGIDA */}
            {data.saidas && data.saidas.length > 0 && (
              <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
                <div className="px-5 py-3 bg-slate-50 border-b font-bold text-slate-700">Histórico de Saídas</div>

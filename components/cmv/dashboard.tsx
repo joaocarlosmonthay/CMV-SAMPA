@@ -1,128 +1,166 @@
 "use client"
 
-import { TrendingDown, TrendingUp, DollarSign, Package, ShoppingCart, AlertTriangle, Calculator } from "lucide-react"
+import { ArrowDownRight, ArrowUpRight, DollarSign, Package, PackageMinus, PackagePlus, Percent, ReceiptText, TrendingDown, TrendingUp, ChevronRight, AlertTriangle, Info, ChefHat, Salad, HandPlatter } from "lucide-react"
 
 const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 
-export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, contagemFinal, produtos, precosReferencia }: any) {
-  // 1. Faturamento (Agora puxado automaticamente lá da Central)
-  const faturamento = lancamentos?.faturamento || 0
+// COMPONENTES DE CARD SUBSTITUTOS (Para não depender de instação extra)
+const Card = ({ children, className }: any) => <div className={`bg-white rounded-3xl ${className}`}>{children}</div>
+const CardHeader = ({ children, className }: any) => <div className={`p-6 ${className}`}>{children}</div>
+const CardTitle = ({ children, className }: any) => <h3 className={`font-semibold leading-none tracking-tight ${className}`}>{children}</h3>
+const CardContent = ({ children, className }: any) => <div className={`p-6 pt-0 ${className}`}>{children}</div>
 
-  // 2. Compras
-  const totalCompras = lancamentos?.compras?.reduce((acc: number, c: any) => acc + (c.valorTotal || (c.quantidade * c.valorUnitario)), 0) || 0
+interface DashboardProps {
+  dataInicio: string
+  dataFim: string
+  lancamentos: any
+  contagemInicial: Record<number, { qtd: string; valor: string }>
+  contagemFinal: Record<number, { qtd: string; valor: string }>
+  produtos: any[]
+  precosReferencia: Record<string, number>
+  onChangeFaturamento?: () => void
+}
 
-  // 3. Abatimentos (Custos DRE + As Novas Saídas Avulsas do Prensadao)
-  const totalCustosDRE = (lancamentos?.outrosCustos?.embalagens || 0) +
-                         (lancamentos?.outrosCustos?.materialLimpeza || 0) +
-                         (lancamentos?.outrosCustos?.desperdicios || 0)
+export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, contagemFinal, produtos, precosReferencia }: DashboardProps) {
+  
+  // 1. Cálculos de Estoque
+  let valorInicial = 0
+  Object.values(contagemInicial).forEach((item) => {
+    const qtd = parseFloat(item.qtd) || 0; const val = parseFloat(item.valor) || 0;
+    valorInicial += (qtd * val)
+  })
 
-  // O sistema é inteligente: ele pega a quantidade da saída e multiplica pelo preço salvo no banco
-  const totalSaidasAvulsas = lancamentos?.saidas?.reduce((acc: number, s: any) => {
-     // Puxa o ID do produto usando o nome, para encontrar o preço de referência
-     const prod = produtos?.find((p: any) => p.nome === s.produto)
-     const preco = prod ? (precosReferencia[prod.id] || 0) : 0
-     return acc + (s.quantidade * preco)
-  }, 0) || 0
+  let valorFinal = 0
+  Object.values(contagemFinal).forEach((item) => {
+    const qtd = parseFloat(item.qtd) || 0; const val = parseFloat(item.valor) || 0;
+    valorFinal += (qtd * val)
+  })
 
-  const totalAbatimentos = totalCustosDRE + totalSaidasAvulsas
-
-  // 4. Estoques (Lidando com a nova Mágica do Valor Unitário)
-  const calcularValorEstoque = (contagem: any) => {
-    let total = 0
-    if (!contagem) return 0
-    
-    Object.entries(contagem).forEach(([id, data]: [string, any]) => {
-      let qtd = 0;
-      let valor = 0;
-      
-      // Checa se é a estrutura nova { qtd, valor } ou a antiga (só número)
-      if (typeof data === 'object' && data !== null) {
-        qtd = parseFloat(data.qtd?.toString().replace(",", ".") || "0")
-        valor = parseFloat(data.valor?.toString().replace(",", ".") || "0")
-      } else {
-        qtd = parseFloat(data?.toString().replace(",", ".") || "0")
-      }
-      
-      // Se o valor estiver zerado (ex: estoque final que o sistema calcula sozinho), ele usa o preço de referência/última compra
-      if (valor === 0) valor = precosReferencia[id] || 0
-      
-      total += qtd * valor
-    })
-    return total
+  // 2. Cálculos de Compras
+  let comprasInsumos = 0
+  if (lancamentos.compras) {
+    lancamentos.compras.forEach((c: any) => { comprasInsumos += (c.quantidade * c.valorUnitario) })
   }
 
-  const totalInicial = calcularValorEstoque(contagemInicial)
-  const totalFinal = calcularValorEstoque(contagemFinal)
+  // 3. CÁLCULO DE ABATIMENTOS INTELIGENTE
+  let abatimentos = 0
+  let custoDRETotal = (lancamentos.outrosCustos?.embalagens || 0) + (lancamentos.outrosCustos?.materialLimpeza || 0)
 
-  // 5. Matemática Sagrada do CMV
-  const consumoReal = (totalInicial + totalCompras) - totalFinal - totalAbatimentos
-  const cmvPercentual = faturamento > 0 ? (consumoReal / faturamento) * 100 : 0
+  if (lancamentos.saidas) {
+    lancamentos.saidas.forEach((s: any) => {
+      const prodEncontrado = produtos.find(p => p.nome === s.produto)
+      const pId = prodEncontrado ? prodEncontrado.id : null
 
-  // Configuração dos Cards
-  const cards = [
-    { title: "Faturamento", value: faturamento, icon: TrendingUp, color: "text-emerald-600", bg: "bg-emerald-100", desc: "Vendas totais da semana" },
-    { title: "Est. Inicial", value: totalInicial, icon: Package, color: "text-orange-600", bg: "bg-orange-100", desc: "O que tínhamos no início" },
-    { title: "Compras", value: totalCompras, icon: ShoppingCart, color: "text-blue-600", bg: "bg-blue-100", desc: "Tudo o que entrou" },
-    { title: "Est. Final", value: totalFinal, icon: Package, color: "text-purple-600", bg: "bg-purple-100", desc: "O que sobrou no fim" },
-    { title: "Abatimentos", value: totalAbatimentos, icon: AlertTriangle, color: "text-slate-600", bg: "bg-slate-100", desc: "Saídas Avulsas + Custos DRE" },
-  ]
+      let preco = 0
+
+      if (pId && precosReferencia[String(pId)]) {
+        preco = precosReferencia[String(pId)]
+      } else if (pId && contagemInicial[pId] && parseFloat(contagemInicial[pId].valor) > 0) {
+        preco = parseFloat(contagemInicial[pId].valor)
+      } else if (lancamentos.compras) {
+          const compraDesseProd = lancamentos.compras.find((c:any) => c.produto === s.produto)
+          if(compraDesseProd) preco = compraDesseProd.valorUnitario
+      }
+
+      const valorAbatido = s.quantidade * preco
+
+      if (s.motivo !== "Desperdício / Vencido") {
+        abatimentos += valorAbatido
+        if (s.motivo === "Teste / Marketing") custoDRETotal += valorAbatido
+      }
+    })
+  }
+
+  // 4. Cálculos Finais de CMV
+  const fat = lancamentos.faturamento || 0
+  const totalDisponivel = valorInicial + comprasInsumos
+  const consumoRealBruto = totalDisponivel - valorFinal
+  const consumoRealLiquido = consumoRealBruto - abatimentos
+
+  const cmvPercentual = fat > 0 ? (consumoRealLiquido / fat) * 100 : 0
+  
+  const metaCMV = 29.0
+  const cmvBom = cmvPercentual > 0 && cmvPercentual <= metaCMV
+
+  const topProdutos = [...(lancamentos.compras || [])].sort((a, b) => (b.quantidade * b.valorUnitario) - (a.quantidade * a.valorUnitario)).slice(0, 5)
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 pb-20">
-       
-       {/* HEADER */}
-       <div>
-          <h2 className="text-3xl font-black text-[#1E3A8A]">Visão Geral da Semana</h2>
-       </div>
+    <div className="space-y-6 pb-24">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 bg-white p-6 rounded-3xl border shadow-sm relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-[#1E3A8A]/5 rounded-full -translate-y-1/2 translate-x-1/3 blur-3xl pointer-events-none"></div>
+        <div>
+          <h1 className="text-3xl font-black text-[#1E3A8A] tracking-tight">Visão Geral</h1>
+          <p className="text-muted-foreground mt-1 font-medium flex items-center gap-2">
+            Análise Financeira • {dataInicio.split('-').reverse().join('/')} a {dataFim.split('-').reverse().join('/')}
+          </p>
+        </div>
+        <div className="bg-slate-50 px-6 py-4 rounded-2xl border-2 shadow-inner min-w-[200px]">
+          <span className="text-xs font-black text-slate-400 uppercase tracking-wider block mb-1">Faturamento Bruto</span>
+          <span className="text-3xl font-black text-green-600">{formatBRL(fat)}</span>
+        </div>
+      </div>
 
-       {/* GRIDS DE CARDS */}
-       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {cards.map((c, i) => (
-            <div key={i} className="bg-white p-6 rounded-2xl border shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
-               <div className="flex items-center gap-3 mb-4">
-                 <div className={`p-3 rounded-xl ${c.bg} ${c.color}`}><c.icon className="w-6 h-6" /></div>
-                 <span className="font-bold text-slate-700 text-lg">{c.title}</span>
-               </div>
-               <div className="text-3xl font-black text-slate-800">
-                 {c.value === 0 && c.title === "Faturamento" ? (
-                   <span className="text-xl text-slate-400">Não lançado</span>
-                 ) : (
-                   formatBRL(c.value)
-                 )}
-               </div>
-               <p className="text-xs text-muted-foreground mt-2 font-medium uppercase tracking-wider">{c.desc}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="rounded-3xl border-0 shadow-md bg-gradient-to-br from-[#1E3A8A] to-blue-800 text-white overflow-hidden relative">
+          <div className="absolute top-0 right-0 p-4 opacity-20"><Percent className="w-24 h-24" /></div>
+          <CardHeader className="pb-2 relative z-10"><CardTitle className="text-sm font-bold text-blue-200 uppercase tracking-wider">Índice CMV Real</CardTitle></CardHeader>
+          <CardContent className="relative z-10">
+            <div className="text-5xl font-black mb-2 flex items-baseline gap-1">{cmvPercentual.toFixed(2)}<span className="text-2xl text-blue-300">%</span></div>
+            <div className="flex items-center gap-2 text-sm font-bold bg-white/10 w-fit px-3 py-1.5 rounded-full backdrop-blur-sm">
+              {fat === 0 ? (<><AlertTriangle className="w-4 h-4 text-amber-300" /> <span className="text-amber-100">Falta Faturamento</span></>) : 
+               cmvBom ? (<><TrendingDown className="w-4 h-4 text-emerald-400" /> <span className="text-emerald-100">Abaixo da Meta ({metaCMV}%)</span></>) : 
+               (<><TrendingUp className="w-4 h-4 text-red-400" /> <span className="text-red-100">Acima da Meta ({metaCMV}%)</span></>)}
             </div>
-          ))}
-       </div>
+          </CardContent>
+        </Card>
 
-       {/* MEGA CARD DO CMV */}
-       <div className={`mt-8 p-8 rounded-3xl border-4 shadow-xl flex flex-col lg:flex-row items-center justify-between gap-8 transition-colors ${cmvPercentual > 35 ? 'bg-red-50 border-red-200' : cmvPercentual > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50 border-blue-200'}`}>
-          <div className="flex items-center gap-6 text-center lg:text-left flex-col lg:flex-row">
-            <div className={`p-6 rounded-full shadow-inner ${cmvPercentual > 35 ? 'bg-red-200 text-red-700' : cmvPercentual > 0 ? 'bg-emerald-200 text-emerald-700' : 'bg-blue-200 text-blue-700'}`}>
-               <Calculator className="w-12 h-12" />
-            </div>
-            <div>
-               <h3 className="text-2xl font-black text-slate-800 uppercase tracking-wider">Custo da Mercadoria (CMV)</h3>
-               <p className="text-sm font-bold text-slate-500 mt-1 bg-white/50 px-3 py-1 rounded-full inline-block">Fórmula: (Inicial + Compras) - Final - Abatimentos</p>
-            </div>
-          </div>
-          
-          <div className="flex flex-col sm:flex-row items-center gap-8 text-center lg:text-right bg-white p-6 rounded-2xl shadow-sm border">
-             <div>
-                <span className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">Consumo Real</span>
-                <span className="text-3xl font-black text-slate-800">{formatBRL(consumoReal)}</span>
-             </div>
-             <div className="h-16 w-1 bg-slate-200 hidden sm:block"></div>
-             <div className="w-full h-1 bg-slate-200 sm:hidden"></div>
-             <div>
-                <span className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">Índice</span>
-                <span className={`text-5xl font-black ${cmvPercentual > 35 ? 'text-red-600' : cmvPercentual > 0 ? 'text-emerald-600' : 'text-blue-600'}`}>
-                   {cmvPercentual.toFixed(2).replace(".", ",")}%
-                </span>
-             </div>
-          </div>
-       </div>
+        <Card className="rounded-3xl border-2 shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2"><ChefHat className="w-4 h-4 text-orange-500" /> Consumo Real</CardTitle></CardHeader><CardContent><div className="text-3xl font-black text-slate-800">{formatBRL(consumoRealLiquido)}</div><p className="text-xs text-muted-foreground mt-2 font-medium flex items-center gap-1"><Info className="w-3 h-3"/> Custo líquido dos insumos vendidos</p></CardContent></Card>
+        <Card className="rounded-3xl border-2 shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2"><PackageMinus className="w-4 h-4 text-amber-500" /> Abatimentos</CardTitle></CardHeader><CardContent><div className="text-3xl font-black text-slate-800">{formatBRL(abatimentos)}</div><p className="text-xs text-muted-foreground mt-2 font-medium flex items-center gap-1"><Info className="w-3 h-3"/> Lanches, sócios e etc.</p></CardContent></Card>
+        <Card className="rounded-3xl border-2 shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2"><ReceiptText className="w-4 h-4 text-rose-500" /> Outros Custos DRE</CardTitle></CardHeader><CardContent><div className="text-3xl font-black text-slate-800">{formatBRL(custoDRETotal)}</div><p className="text-xs text-muted-foreground mt-2 font-medium flex items-center gap-1"><Info className="w-3 h-3"/> Embalagens e Limpeza</p></CardContent></Card>
+      </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="col-span-1 lg:col-span-2 rounded-3xl border-2 shadow-sm">
+          <CardHeader className="border-b bg-slate-50/50 rounded-t-3xl pb-4">
+            <CardTitle className="flex items-center gap-3 text-xl font-black text-slate-800"><DollarSign className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg w-8 h-8" /> Movimentação de Estoque</CardTitle>
+          </CardHeader>
+          <CardContent className="p-6">
+            <div className="space-y-6">
+              <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border"><div className="flex items-center gap-4"><div className="p-3 bg-blue-100 text-blue-600 rounded-xl"><PackagePlus className="w-6 h-6" /></div><div><p className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Estoque Inicial</p><p className="text-2xl font-black text-slate-800">{formatBRL(valorInicial)}</p></div></div></div>
+              <div className="flex items-center justify-between p-4 rounded-2xl bg-emerald-50 border border-emerald-100"><div className="flex items-center gap-4"><div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl"><ArrowDownRight className="w-6 h-6" /></div><div><p className="text-sm font-bold text-emerald-800/70 uppercase tracking-wider">Compras na Semana</p><p className="text-2xl font-black text-emerald-700">+{formatBRL(comprasInsumos)}</p></div></div></div>
+              <div className="flex items-center justify-between p-4 rounded-2xl bg-amber-50 border border-amber-100"><div className="flex items-center gap-4"><div className="p-3 bg-amber-100 text-amber-600 rounded-xl"><ArrowUpRight className="w-6 h-6" /></div><div><p className="text-sm font-bold text-amber-800/70 uppercase tracking-wider">Estoque Final (Sobrou)</p><p className="text-2xl font-black text-amber-700">-{formatBRL(valorFinal)}</p></div></div></div>
+            </div>
+            <div className="mt-6 pt-6 border-t-2 border-dashed flex items-center justify-between">
+              <span className="text-lg font-black text-slate-500 uppercase">Consumo Bruto</span>
+              <span className="text-3xl font-black text-slate-800">{formatBRL(consumoRealBruto)}</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border-2 shadow-sm flex flex-col">
+          <CardHeader className="border-b bg-slate-50/50 rounded-t-3xl pb-4">
+            <CardTitle className="flex items-center gap-3 text-xl font-black text-slate-800"><Salad className="p-1.5 bg-orange-100 text-orange-600 rounded-lg w-8 h-8" /> Top Compras</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0 flex-1 flex flex-col">
+            {topProdutos.length > 0 ? (
+              <ul className="divide-y flex-1">
+                {topProdutos.map((p, i) => (
+                  <li key={i} className="p-5 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center gap-3"><span className="text-lg font-black text-slate-300 w-5">{i + 1}</span><div><p className="font-bold text-slate-700">{p.produto}</p><p className="text-xs font-semibold text-muted-foreground">{p.quantidade} itens</p></div></div>
+                    <span className="font-black text-orange-600">{formatBRL(p.quantidade * p.valorUnitario)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
+                <HandPlatter className="w-12 h-12 mb-3 opacity-20" />
+                <p className="font-medium">Nenhuma compra registada esta semana.</p>
+              </div>
+            )}
+            <div className="p-4 bg-slate-50 rounded-b-3xl border-t text-center"><button className="text-sm font-bold text-blue-600 flex items-center justify-center gap-1 w-full hover:text-blue-700">Ver todas as compras <ChevronRight className="w-4 h-4" /></button></div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
