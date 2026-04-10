@@ -82,9 +82,74 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
   }
 
   // ============================================================================
-  // NOVO: IMPORTADOR DE CSV PARA O ESTOQUE (Preenche a tela automaticamente!)
+  // IMPORTADOR DE CSV PARA ESTOQUE INICIAL
   // ============================================================================
-  const handleImportarCSVEstoque = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportarCSVEstoqueInicial = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setImportando(true)
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string
+        const delimitador = text.includes(';') ? ';' : ','
+        const rows = text.split('\n').map(row => row.split(delimitador))
+
+        const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
+        const prodIdx = headers.indexOf('produto_id')
+        const qtdIdx = headers.indexOf('quantidade')
+        const valorIdx = headers.indexOf('valor_unitario')
+        const tipoIdx = headers.indexOf('tipo_contagem')
+
+        if (prodIdx === -1 || qtdIdx === -1) {
+          alert("❌ CSV inválido! Faltam as colunas produto_id e quantidade.")
+          setImportando(false); return
+        }
+
+        const novaContagem: Record<number, { qtd: string; valor: string }> = { ...contagem }
+        let importados = 0
+
+        for (let i = 1; i < rows.length; i++) {
+          if (!rows[i] || rows[i].length < 2) continue
+
+          const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '') : 'Inicial'
+          // Se tiver a coluna tipo e não for Inicial, ignora
+          if (tipoIdx !== -1 && tipo !== 'Inicial') continue
+
+          const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, ''))
+          const qtd = parseFloat(rows[i][qtdIdx]?.replace(/"/g, ''))
+          const vu = valorIdx !== -1 ? parseFloat(rows[i][valorIdx]?.replace(/"/g, '')) : 0
+
+          if (!isNaN(pId) && !isNaN(qtd)) {
+            novaContagem[pId] = {
+              qtd: qtd.toString(),
+              valor: isNaN(vu) || vu === 0 ? "" : vu.toString()
+            }
+            importados++
+          }
+        }
+
+        if (importados === 0) {
+           alert("Nenhuma contagem 'Inicial' encontrada neste arquivo.")
+        } else {
+           setContagem(novaContagem)
+           alert(`✅ Sucesso! ${importados} produtos foram preenchidos no Estoque Inicial. Confira os números e clique em "Guardar" para salvar!`)
+        }
+      } catch (error: any) {
+        alert("Erro ao importar: " + error.message)
+      } finally {
+        setImportando(false)
+        e.target.value = '' 
+      }
+    }
+    reader.readAsText(file)
+  }
+
+  // ============================================================================
+  // IMPORTADOR DE CSV PARA O ESTOQUE FINAL
+  // ============================================================================
+  const handleImportarCSVEstoqueFinal = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
@@ -114,7 +179,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
           if (!rows[i] || rows[i].length < 2) continue
 
           const tipo = tipoIdx !== -1 ? rows[i][tipoIdx]?.replace(/"/g, '') : 'Final'
-          // Só importa se o tipo for "Final" para não misturar inicial com final
           if (tipo !== 'Final') continue
 
           const pId = parseInt(rows[i][prodIdx]?.replace(/"/g, ''))
@@ -124,7 +188,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
           if (!isNaN(pId) && !isNaN(qtd)) {
             novaContagem[pId] = {
               qtd: qtd.toString(),
-              valor: isNaN(vu) || vu === 0 ? "" : vu.toString() // Previne exibir 0 se não tiver preço
+              valor: isNaN(vu) || vu === 0 ? "" : vu.toString()
             }
             importados++
           }
@@ -259,18 +323,28 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
 
       {(aba === "inicial" || aba === "final") && (
         <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
-          <div className="flex items-center justify-between bg-white p-4 rounded-xl border shadow-sm">
-             <div><h3 className="font-bold text-lg text-foreground">{aba === "inicial" ? "1. Contagem Inicial" : "5. Fechamento Final"}</h3></div>
+          <div className="flex items-center justify-between bg-white p-4 rounded-xl border shadow-sm flex-wrap gap-4">
+             <div><h3 className="font-bold text-lg text-foreground">{aba === "inicial" ? "1. Contagem Inicial" : "5. Fechamento Final"}</h3><p className="text-sm text-muted-foreground">{aba === "inicial" ? "Adicione os preços para corrigir o CMV." : "Conte o que sobrou. O sistema fará a matemática."}</p></div>
              
-             <div className="flex gap-2">
-               {aba === "inicial" && (<button onClick={handlePuxarAnterior} className="px-4 py-2 bg-amber-100 text-amber-800 rounded-lg font-bold text-sm hover:bg-amber-200 border border-amber-300 shadow-sm flex items-center gap-2"><Package className="w-4 h-4"/> Puxar Anterior</button>)}
+             <div className="flex flex-wrap gap-2">
+               {aba === "inicial" && (<button onClick={handlePuxarAnterior} className="px-4 py-2 bg-blue-100 text-blue-800 rounded-lg font-bold text-sm hover:bg-blue-200 border border-blue-300 shadow-sm flex items-center gap-2 transition-all"><Package className="w-4 h-4"/> Puxar Anterior</button>)}
                
+               {/* BOTÃO MÁGICO DE IMPORTAÇÃO PARA ESTOQUE INICIAL */}
+               {aba === "inicial" && (
+                 <div>
+                   <input type="file" accept=".csv" id="csv-estoque-inicial" className="hidden" onChange={handleImportarCSVEstoqueInicial} disabled={importando} />
+                   <label htmlFor="csv-estoque-inicial" className="cursor-pointer bg-[#2563EB] text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-600 border border-blue-700 shadow-sm flex items-center gap-2 transition-all">
+                      {importando ? "A ler..." : "📥 Importar CSV Inicial"}
+                   </label>
+                 </div>
+               )}
+
                {/* BOTÃO MÁGICO DE IMPORTAÇÃO PARA ESTOQUE FINAL */}
                {aba === "final" && (
                  <div>
-                   <input type="file" accept=".csv" id="csv-estoque" className="hidden" onChange={handleImportarCSVEstoque} disabled={importando} />
-                   <label htmlFor="csv-estoque" className="cursor-pointer bg-[#FACC15] text-[#1E3A8A] px-4 py-2 rounded-lg font-bold text-sm hover:bg-yellow-400 border border-yellow-500 shadow-sm flex items-center gap-2 transition-all">
-                      {importando ? "A ler..." : "📥 Importar CSV"}
+                   <input type="file" accept=".csv" id="csv-estoque-final" className="hidden" onChange={handleImportarCSVEstoqueFinal} disabled={importando} />
+                   <label htmlFor="csv-estoque-final" className="cursor-pointer bg-[#FACC15] text-[#1E3A8A] px-4 py-2 rounded-lg font-bold text-sm hover:bg-yellow-400 border border-yellow-500 shadow-sm flex items-center gap-2 transition-all">
+                      {importando ? "A ler..." : "📥 Importar CSV Final"}
                    </label>
                  </div>
                )}
@@ -323,7 +397,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
               <div className="space-y-2"><label className="text-sm font-semibold">Produto</label><select value={compraProd} onChange={e => setCompraProd(e.target.value)} className="w-full text-base p-3 rounded-xl border-2 bg-background focus:border-emerald-500 outline-none"><option value="">Selecione...</option>{produtos.map(p => <option key={p.id} value={String(p.id)}>{p.nome} ({p.unidade})</option>)}</select></div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2"><label className="text-sm font-semibold">Qtd (Ex: 2.500)</label><input type="number" step="0.001" value={compraQtd} onChange={e => setCompraQtd(e.target.value)} className="w-full text-lg p-3 rounded-xl border-2 focus:border-emerald-500 outline-none" /></div>
-                <div className="space-y-2"><label className="text-sm font-semibold text-emerald-600">Valor Unitário</label><input type="number" step="0.00001" value={compraValor} onChange={e => setCompraValor(e.target.value)} className="w-full text-lg p-3 rounded-xl border-2 border-emerald-200 focus:border-emerald-500 outline-none" /></div>
+                <div className="space-y-2"><label className="text-sm font-semibold text-emerald-600">Valor Unitário (5 casas)</label><input type="number" step="0.00001" value={compraValor} onChange={e => setCompraValor(e.target.value)} className="w-full text-lg p-3 rounded-xl border-2 border-emerald-200 focus:border-emerald-500 outline-none" /></div>
               </div>
               <button onClick={handleRegistrarCompra} disabled={salvando || !compraProd} className="w-full py-4 rounded-xl bg-emerald-600 text-white font-bold text-lg hover:bg-emerald-700 disabled:opacity-50">Registar Compra</button>
            </div>

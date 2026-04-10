@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { PlusCircle, CheckCircle2, Package, Pencil, Trash2, X, Tags } from "lucide-react"
+import { PlusCircle, CheckCircle2, Package, Pencil, Trash2, X, Tags, Upload } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
 const UNIDADES = ["Kg", "Litro", "Unidade", "Pacote"]
@@ -23,6 +23,7 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
   const [editandoId, setEditandoId] = useState<number | null>(null)
   const [salvando, setSalvando] = useState(false)
   const [novaCategoria, setNovaCategoria] = useState("")
+  const [importando, setImportando] = useState(false) // NOVO ESTADO
 
   useEffect(() => { carregarCategorias() }, [])
 
@@ -66,6 +67,71 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
     }
   }
 
+  // ============================================================================
+  // NOVO: IMPORTADOR DE CSV PARA PRODUTOS (MANTENDO OS IDs ORIGINAIS!)
+  // ============================================================================
+  const handleImportarCSVProdutos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setImportando(true)
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string
+        const delimitador = text.includes(';') ? ';' : ','
+        const rows = text.split('\n').map(row => row.split(delimitador))
+
+        const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
+        const idIdx = headers.indexOf('id')
+        const nomeIdx = headers.indexOf('nome')
+        const unidIdx = headers.indexOf('unidade_medida')
+        const grupoIdx = headers.indexOf('grupo_id')
+
+        if (nomeIdx === -1) {
+          alert("❌ CSV inválido! O ficheiro precisa ter no mínimo a coluna 'nome'.")
+          setImportando(false); return
+        }
+
+        const produtosParaInserir = []
+        for (let i = 1; i < rows.length; i++) {
+          if (!rows[i] || rows[i].length < 2) continue
+          
+          const idStr = idIdx !== -1 ? rows[i][idIdx]?.replace(/"/g, '') : null
+          const nomeProd = rows[i][nomeIdx]?.replace(/"/g, '')
+          const unid = unidIdx !== -1 ? rows[i][unidIdx]?.replace(/"/g, '') : 'Unidade'
+          const grupo = grupoIdx !== -1 ? parseInt(rows[i][grupoIdx]?.replace(/"/g, '')) : null
+
+          if (nomeProd) {
+            const prod: any = { nome: nomeProd, unidade_medida: unid }
+            if (grupo && !isNaN(grupo)) prod.grupo_id = grupo
+            // INJEÇÃO DO ID REAL PARA NÃO QUEBRAR O RELACIONAMENTO NAS COMPRAS
+            if (idStr && !isNaN(parseInt(idStr))) {
+                prod.id = parseInt(idStr)
+            }
+            produtosParaInserir.push(prod)
+          }
+        }
+
+        if (produtosParaInserir.length === 0) {
+            alert("Nenhum produto encontrado no ficheiro."); setImportando(false); return
+        }
+
+        const { error } = await supabase.from('produtos').insert(produtosParaInserir)
+        if (error) throw error
+
+        alert(`✅ Sucesso Absoluto! ${produtosParaInserir.length} produtos foram importados. A página vai recarregar.`)
+        window.location.reload()
+      } catch (error: any) {
+        alert("Erro ao importar: " + error.message)
+      } finally {
+        setImportando(false)
+        if(e.target) e.target.value = ''
+      }
+    }
+    reader.readAsText(file)
+  }
+
   const byGroup = gruposDB.reduce<Record<string, Produto[]>>((acc, g) => {
     acc[g.nome] = produtos.filter((p) => p.grupo === g.nome)
     return acc
@@ -97,10 +163,27 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
       ) : (
         <div className="space-y-6 animate-in fade-in">
           <div className={`bg-card rounded-2xl border-2 p-6 shadow-sm space-y-5 ${editandoId ? "border-orange-500 bg-orange-50/50" : "border-border"}`}>
-            <div className="flex justify-between items-center">
+            
+            {/* CABEÇALHO DO CARD COM O NOVO BOTÃO DE IMPORTAR */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <h3 className="text-xl font-bold">{editandoId ? "Editar Produto" : "Novo Produto"}</h3>
-              {editandoId && <button onClick={() => {setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null)}} className="text-muted-foreground hover:text-red-500"><X /></button>}
+              
+              <div className="flex items-center gap-3">
+                {/* BOTÃO MÁGICO AQUI */}
+                {!editandoId && (
+                  <div>
+                    <input type="file" accept=".csv" id="csv-produtos" className="hidden" onChange={handleImportarCSVProdutos} disabled={importando} />
+                    <label htmlFor="csv-produtos" className="cursor-pointer bg-blue-100 text-blue-800 px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-200 border border-blue-300 shadow-sm flex items-center gap-2 transition-all">
+                       <Upload className="w-4 h-4"/>
+                       {importando ? "A ler..." : "📥 Importar Produtos"}
+                    </label>
+                  </div>
+                )}
+                
+                {editandoId && <button onClick={() => {setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null)}} className="text-muted-foreground hover:text-red-500"><X /></button>}
+              </div>
             </div>
+
             <div className="space-y-2">
               <label className="font-semibold block">Nome do Produto</label>
               <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none" />
