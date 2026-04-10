@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { ReceiptText, CheckCircle2, Droplets, Package, Trash2, Box, Users } from "lucide-react"
+import { ReceiptText, CheckCircle2, Package, Trash2, Box } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
 interface OutrosCustasProps {
@@ -13,11 +13,8 @@ interface OutrosCustasProps {
 
 const OUTROS_CAMPOS = [
   { key: "embalagens", label: "Embalagens", desc: "Caixas, sacos, etc.", icon: Box },
-  { key: "consumoInterno", label: "Consumo Interno", desc: "Refeição dos funcionários", icon: Droplets },
-  { key: "consumoSocios", label: "Consumo Sócios", desc: "Retirada dos donos", icon: Users },
-  { key: "testeMkt", label: "Teste / Mkt", desc: "Degustação e fotos", icon: Package },
   { key: "materialLimpeza", label: "Material de Limpeza", desc: "Detergente, cloro, etc.", icon: Package },
-  { key: "desperdicios", label: "Desperdícios", desc: "Queimas, erros", icon: Trash2 },
+  { key: "desperdicios", label: "Desperdícios", desc: "Queimas, erros (que não são insumos)", icon: Trash2 },
 ]
 
 export function OutrosCustosDRE({ data, dataInicio, dataFim, onChange }: OutrosCustasProps) {
@@ -25,13 +22,9 @@ export function OutrosCustosDRE({ data, dataInicio, dataFim, onChange }: OutrosC
   const [salvando, setSalvando] = useState(false)
   const [salvo, setSalvo] = useState(false)
 
-  // Sincroniza quando os dados do banco carregam
   useEffect(() => {
     setValores({
       embalagens: String(data.outrosCustos.embalagens || ""),
-      consumoInterno: String(data.outrosCustos.consumoInterno || ""),
-      consumoSocios: String(data.outrosCustos.consumoSocios || ""),
-      testeMkt: String(data.outrosCustos.testeMkt || ""),
       materialLimpeza: String(data.outrosCustos.materialLimpeza || ""),
       desperdicios: String(data.outrosCustos.desperdicios || "")
     })
@@ -40,21 +33,25 @@ export function OutrosCustosDRE({ data, dataInicio, dataFim, onChange }: OutrosC
   const handleSalvar = async () => {
     setSalvando(true)
     
-    // Deleta os dados antigos da semana
-    await supabase.from('financas_semanais').delete().eq('data_inicio', dataInicio).eq('data_fim', dataFim)
-
-    // Insere os novos
-    const { error } = await supabase.from('financas_semanais').insert([{
+    // Atualiza apenas os campos desta tela, preservando o faturamento e os consumos antigos se houver
+    const payload = {
       data_inicio: dataInicio,
       data_fim: dataFim,
-      faturamento: data.faturamento, // Mantém o faturamento que já existia
       embalagens: parseFloat(valores.embalagens.replace(",", ".")) || 0,
-      consumo_interno: parseFloat(valores.consumoInterno.replace(",", ".")) || 0,
-      consumo_socios: parseFloat(valores.consumoSocios.replace(",", ".")) || 0,
-      teste_mkt: parseFloat(valores.testeMkt.replace(",", ".")) || 0,
       material_limpeza: parseFloat(valores.materialLimpeza.replace(",", ".")) || 0,
       desperdicios: parseFloat(valores.desperdicios.replace(",", ".")) || 0
-    }])
+    }
+
+    const { data: fData } = await supabase.from('financas_semanais').select('id').eq('data_inicio', dataInicio).eq('data_fim', dataFim).maybeSingle()
+
+    let error;
+    if (fData) {
+      const res = await supabase.from('financas_semanais').update(payload).eq('id', fData.id)
+      error = res.error
+    } else {
+      const res = await supabase.from('financas_semanais').insert([payload])
+      error = res.error
+    }
 
     if (!error) {
       setSalvo(true)
@@ -69,11 +66,11 @@ export function OutrosCustosDRE({ data, dataInicio, dataFim, onChange }: OutrosC
   return (
     <div className="space-y-6 pb-24">
       <div>
-        <h2 className="text-2xl font-bold text-foreground mb-1">Outros Custos (DRE)</h2>
-        <p className="text-muted-foreground text-base">Registe os valores consumidos para abater no cálculo do CMV.</p>
+        <h2 className="text-2xl font-bold text-foreground mb-1">Custos Operacionais (DRE)</h2>
+        <p className="text-muted-foreground text-base">Registe apenas despesas com materiais não comestíveis.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {OUTROS_CAMPOS.map(({ key, label, desc, icon: Icon }) => (
           <div key={key} className="bg-card rounded-2xl border-2 p-5 shadow-sm hover:border-[#C0392B]/50 transition-colors">
             <div className="flex items-center gap-3 mb-4">

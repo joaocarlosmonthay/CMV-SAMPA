@@ -1,106 +1,128 @@
 "use client"
 
-import React, { useState } from "react"
-import { TrendingUp, ShoppingCart, BarChart2, PackageOpen, AlertTriangle, CheckCircle2, Layers, PenLine, Lock, Unlock } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { TrendingDown, TrendingUp, DollarSign, Package, ShoppingCart, AlertTriangle, Calculator } from "lucide-react"
 
-const META_CMV = 29
 const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 
-export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, contagemFinal, produtos, precosReferencia, onChangeFaturamento }: any) {
-  const [fatInput, setFatInput] = useState<string>(lancamentos.faturamento > 0 ? String(lancamentos.faturamento) : "")
-  const [fatSalvo, setFatSalvo] = useState(lancamentos.faturamento > 0)
-  const [salvandoFat, setSalvandoFat] = useState(false)
-  const [trancado, setTrancado] = useState(lancamentos.faturamento > 0)
+export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, contagemFinal, produtos, precosReferencia }: any) {
+  // 1. Faturamento (Agora puxado automaticamente lá da Central)
+  const faturamento = lancamentos?.faturamento || 0
 
-  const { faturamento, compras, outrosCustos } = lancamentos
-  const totalCompras = compras.reduce((a: any, c: any) => a + c.valorTotal, 0)
+  // 2. Compras
+  const totalCompras = lancamentos?.compras?.reduce((acc: number, c: any) => acc + (c.valorTotal || (c.quantidade * c.valorUnitario)), 0) || 0
 
-  const handleSalvarFaturamento = async () => {
-    const val = parseFloat(fatInput.replace(",", ".")) || 0
-    if (val <= 0) return
-    setSalvandoFat(true)
-    await supabase.from('financas_semanais').delete().eq('data_inicio', dataInicio).eq('data_fim', dataFim)
-    const { error } = await supabase.from('financas_semanais').insert([{
-      data_inicio: dataInicio, data_fim: dataFim, faturamento: val, embalagens: outrosCustos.embalagens, consumo_interno: outrosCustos.consumoInterno, consumo_socios: outrosCustos.consumoSocios, teste_mkt: outrosCustos.testeMkt, material_limpeza: outrosCustos.materialLimpeza, desperdicios: outrosCustos.desperdicios
-    }])
-    if (!error) { onChangeFaturamento(val); setFatSalvo(true); setTrancado(true); }
-    setSalvandoFat(false)
+  // 3. Abatimentos (Custos DRE + As Novas Saídas Avulsas do Prensadao)
+  const totalCustosDRE = (lancamentos?.outrosCustos?.embalagens || 0) +
+                         (lancamentos?.outrosCustos?.materialLimpeza || 0) +
+                         (lancamentos?.outrosCustos?.desperdicios || 0)
+
+  // O sistema é inteligente: ele pega a quantidade da saída e multiplica pelo preço salvo no banco
+  const totalSaidasAvulsas = lancamentos?.saidas?.reduce((acc: number, s: any) => {
+     // Puxa o ID do produto usando o nome, para encontrar o preço de referência
+     const prod = produtos?.find((p: any) => p.nome === s.produto)
+     const preco = prod ? (precosReferencia[prod.id] || 0) : 0
+     return acc + (s.quantidade * preco)
+  }, 0) || 0
+
+  const totalAbatimentos = totalCustosDRE + totalSaidasAvulsas
+
+  // 4. Estoques (Lidando com a nova Mágica do Valor Unitário)
+  const calcularValorEstoque = (contagem: any) => {
+    let total = 0
+    if (!contagem) return 0
+    
+    Object.entries(contagem).forEach(([id, data]: [string, any]) => {
+      let qtd = 0;
+      let valor = 0;
+      
+      // Checa se é a estrutura nova { qtd, valor } ou a antiga (só número)
+      if (typeof data === 'object' && data !== null) {
+        qtd = parseFloat(data.qtd?.toString().replace(",", ".") || "0")
+        valor = parseFloat(data.valor?.toString().replace(",", ".") || "0")
+      } else {
+        qtd = parseFloat(data?.toString().replace(",", ".") || "0")
+      }
+      
+      // Se o valor estiver zerado (ex: estoque final que o sistema calcula sozinho), ele usa o preço de referência/última compra
+      if (valor === 0) valor = precosReferencia[id] || 0
+      
+      total += qtd * valor
+    })
+    return total
   }
 
-  // Lógica matemática
-  const calcularCusto = (contagem: any) => {
-    return produtos.reduce((total: number, p: any) => {
-      const qtd = parseFloat(contagem[p.id] ?? "0") || 0
-      if (qtd === 0) return total
-      const comprasDoProduto = compras.filter((c: any) => c.produto === p.nome)
-      const custoUnitario = comprasDoProduto.length > 0 ? comprasDoProduto.reduce((s: number, c: any) => s + c.valorUnitario, 0) / comprasDoProduto.length : (precosReferencia[p.id] || 0)
-      return total + (qtd * custoUnitario)
-    }, 0)
-  }
+  const totalInicial = calcularValorEstoque(contagemInicial)
+  const totalFinal = calcularValorEstoque(contagemFinal)
 
-  const custoInicial = calcularCusto(contagemInicial)
-  const custoFinal = calcularCusto(contagemFinal)
-  
-  // A MATEMÁTICA DO TIO TIAGO AQUI:
-  const custoGastoBruto = custoInicial + totalCompras - custoFinal;
-  
-  // Subtrair o que NÃO foi vendido (para não culpar o CMV da cozinha)
-  const deduzirDoCMV = 
-    (outrosCustos.consumoInterno || 0) + 
-    (outrosCustos.consumoSocios || 0) + 
-    (outrosCustos.testeMkt || 0) + 
-    (outrosCustos.desperdicios || 0);
+  // 5. Matemática Sagrada do CMV
+  const consumoReal = (totalInicial + totalCompras) - totalFinal - totalAbatimentos
+  const cmvPercentual = faturamento > 0 ? (consumoReal / faturamento) * 100 : 0
 
-  const cmvReais = custoGastoBruto - deduzirDoCMV;
-  const cmvPct = faturamento > 0 ? ((cmvReais / faturamento) * 100).toFixed(1) : null;
-  const abaixoDaMeta = cmvPct !== null && parseFloat(cmvPct) < META_CMV;
+  // Configuração dos Cards
+  const cards = [
+    { title: "Faturamento", value: faturamento, icon: TrendingUp, color: "text-emerald-600", bg: "bg-emerald-100", desc: "Vendas totais da semana" },
+    { title: "Est. Inicial", value: totalInicial, icon: Package, color: "text-orange-600", bg: "bg-orange-100", desc: "O que tínhamos no início" },
+    { title: "Compras", value: totalCompras, icon: ShoppingCart, color: "text-blue-600", bg: "bg-blue-100", desc: "Tudo o que entrou" },
+    { title: "Est. Final", value: totalFinal, icon: Package, color: "text-purple-600", bg: "bg-purple-100", desc: "O que sobrou no fim" },
+    { title: "Abatimentos", value: totalAbatimentos, icon: AlertTriangle, color: "text-slate-600", bg: "bg-slate-100", desc: "Saídas Avulsas + Custos DRE" },
+  ]
 
   return (
-    <div className="space-y-8 pb-20">
-      <div><h2 className="text-2xl font-bold text-foreground mb-1">Dashboard — Resumo da Semana</h2><p className="text-muted-foreground text-base">Analisando de {dataInicio.split('-').reverse().join('/')} até {dataFim.split('-').reverse().join('/')}</p></div>
+    <div className="space-y-6 animate-in fade-in duration-300 pb-20">
+       
+       {/* HEADER */}
+       <div>
+          <h2 className="text-3xl font-black text-[#1E3A8A]">Visão Geral da Semana</h2>
+       </div>
 
-      <div className="bg-card rounded-2xl border-2 border-[#C0392B]/40 p-6 shadow-sm space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-3 rounded-xl bg-[#C0392B]/10"><PenLine className="w-6 h-6 text-[#C0392B]" /></div>
-            <div><h3 className="text-lg font-bold text-foreground">Registar Faturamento da Semana (R$)</h3></div>
+       {/* GRIDS DE CARDS */}
+       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {cards.map((c, i) => (
+            <div key={i} className="bg-white p-6 rounded-2xl border shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+               <div className="flex items-center gap-3 mb-4">
+                 <div className={`p-3 rounded-xl ${c.bg} ${c.color}`}><c.icon className="w-6 h-6" /></div>
+                 <span className="font-bold text-slate-700 text-lg">{c.title}</span>
+               </div>
+               <div className="text-3xl font-black text-slate-800">
+                 {c.value === 0 && c.title === "Faturamento" ? (
+                   <span className="text-xl text-slate-400">Não lançado</span>
+                 ) : (
+                   formatBRL(c.value)
+                 )}
+               </div>
+               <p className="text-xs text-muted-foreground mt-2 font-medium uppercase tracking-wider">{c.desc}</p>
+            </div>
+          ))}
+       </div>
+
+       {/* MEGA CARD DO CMV */}
+       <div className={`mt-8 p-8 rounded-3xl border-4 shadow-xl flex flex-col lg:flex-row items-center justify-between gap-8 transition-colors ${cmvPercentual > 35 ? 'bg-red-50 border-red-200' : cmvPercentual > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50 border-blue-200'}`}>
+          <div className="flex items-center gap-6 text-center lg:text-left flex-col lg:flex-row">
+            <div className={`p-6 rounded-full shadow-inner ${cmvPercentual > 35 ? 'bg-red-200 text-red-700' : cmvPercentual > 0 ? 'bg-emerald-200 text-emerald-700' : 'bg-blue-200 text-blue-700'}`}>
+               <Calculator className="w-12 h-12" />
+            </div>
+            <div>
+               <h3 className="text-2xl font-black text-slate-800 uppercase tracking-wider">Custo da Mercadoria (CMV)</h3>
+               <p className="text-sm font-bold text-slate-500 mt-1 bg-white/50 px-3 py-1 rounded-full inline-block">Fórmula: (Inicial + Compras) - Final - Abatimentos</p>
+            </div>
           </div>
-          <button onClick={() => setTrancado(!trancado)} className="p-3 rounded-full bg-muted hover:bg-border transition-colors">
-            {trancado ? <Lock className="w-6 h-6 text-[#C0392B]" /> : <Unlock className="w-6 h-6 text-[#1E6B43]" />}
-          </button>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">R$</span>
-            <input type="number" min="0" step="0.01" value={fatInput} onChange={(e) => { setFatInput(e.target.value); setFatSalvo(false) }} disabled={trancado} placeholder="0,00" className="w-full text-2xl font-extrabold pl-14 pr-4 py-4 rounded-xl border-2 border-input bg-background focus:border-[#C0392B] focus:outline-none transition-colors disabled:opacity-50 disabled:bg-muted" />
+          
+          <div className="flex flex-col sm:flex-row items-center gap-8 text-center lg:text-right bg-white p-6 rounded-2xl shadow-sm border">
+             <div>
+                <span className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">Consumo Real</span>
+                <span className="text-3xl font-black text-slate-800">{formatBRL(consumoReal)}</span>
+             </div>
+             <div className="h-16 w-1 bg-slate-200 hidden sm:block"></div>
+             <div className="w-full h-1 bg-slate-200 sm:hidden"></div>
+             <div>
+                <span className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">Índice</span>
+                <span className={`text-5xl font-black ${cmvPercentual > 35 ? 'text-red-600' : cmvPercentual > 0 ? 'text-emerald-600' : 'text-blue-600'}`}>
+                   {cmvPercentual.toFixed(2).replace(".", ",")}%
+                </span>
+             </div>
           </div>
-          {!trancado && (
-            <button onClick={handleSalvarFaturamento} disabled={!fatInput || parseFloat(fatInput) <= 0 || salvandoFat} className="flex items-center justify-center gap-2 text-lg font-bold py-4 px-8 rounded-xl text-white bg-[#C0392B] hover:bg-[#9B2B1F] transition-all whitespace-nowrap">
-              {salvandoFat ? "A Guardar..." : "Salvar Faturamento"}
-            </button>
-          )}
-        </div>
-      </div>
+       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-        <div className="bg-card rounded-2xl border p-6 flex flex-col gap-3 shadow-sm"><div className="flex items-center gap-3"><div className="p-3 rounded-xl bg-[#C0392B]/10"><TrendingUp className="w-7 h-7 text-[#C0392B]" /></div><span className="text-lg font-semibold text-muted-foreground">Faturamento</span></div><p className="text-4xl font-extrabold">{faturamento > 0 ? formatBRL(faturamento) : <span className="text-muted-foreground text-2xl">Não lançado</span>}</p></div>
-        <div className="bg-card rounded-2xl border p-6 flex flex-col gap-3 shadow-sm"><div className="flex items-center gap-3"><div className="p-3 rounded-xl bg-orange-100"><Layers className="w-7 h-7 text-orange-600" /></div><span className="text-lg font-semibold text-muted-foreground">Est. Inicial</span></div><p className="text-4xl font-extrabold">{formatBRL(custoInicial)}</p></div>
-        <div className="bg-card rounded-2xl border p-6 flex flex-col gap-3 shadow-sm"><div className="flex items-center gap-3"><div className="p-3 rounded-xl bg-blue-100"><ShoppingCart className="w-7 h-7 text-blue-600" /></div><span className="text-lg font-semibold text-muted-foreground">Compras</span></div><p className="text-4xl font-extrabold">{formatBRL(totalCompras)}</p></div>
-        <div className="bg-card rounded-2xl border p-6 flex flex-col gap-3 shadow-sm"><div className="flex items-center gap-3"><div className="p-3 rounded-xl bg-purple-100"><PackageOpen className="w-7 h-7 text-purple-600" /></div><span className="text-lg font-semibold text-muted-foreground">Est. Final</span></div><p className="text-4xl font-extrabold">{formatBRL(custoFinal)}</p></div>
-        
-        {/* Mostrando os Abatimentos do CMV */}
-        <div className="bg-card rounded-2xl border p-6 flex flex-col gap-3 shadow-sm">
-          <div className="flex items-center gap-3"><div className="p-3 rounded-xl bg-gray-100"><AlertTriangle className="w-7 h-7 text-gray-600" /></div><span className="text-lg font-semibold text-muted-foreground">Abatimentos (Não vendidos)</span></div>
-          <p className="text-4xl font-extrabold text-gray-700">{formatBRL(deduzirDoCMV)}</p>
-          <span className="text-xs text-muted-foreground">Sócios + Funcionários + Desperdício + Mkt</span>
-        </div>
-
-        <div className={`rounded-2xl border p-6 flex flex-col gap-3 shadow-sm sm:col-span-2 xl:col-span-3 ${abaixoDaMeta ? "bg-[#1E6B43]/5 border-[#1E6B43]/30" : cmvPct !== null ? "bg-[#C0392B]/5 border-[#C0392B]/30" : "bg-card border-border"}`}>
-          <div className="flex items-center gap-3"><div className={`p-3 rounded-xl ${abaixoDaMeta ? "bg-[#1E6B43]/15" : "bg-[#C0392B]/15"}`}><BarChart2 className={`w-7 h-7 ${abaixoDaMeta ? "text-[#1E6B43]" : "text-[#C0392B]"}`} /></div><span className="text-lg font-semibold text-muted-foreground">CMV% Real da Cozinha</span></div>
-          {cmvPct !== null ? (<><p className={`text-6xl font-extrabold ${abaixoDaMeta ? "text-[#1E6B43]" : "text-[#C0392B]"}`}>{cmvPct}%</p><span className={`text-sm font-bold px-3 py-1.5 rounded-full text-white self-start ${abaixoDaMeta ? "bg-[#1E6B43]" : "bg-[#C0392B]"}`}>{abaixoDaMeta ? "Abaixo da meta" : "Acima da meta"}</span></>) : (<div className="flex items-center gap-2 text-muted-foreground"><AlertTriangle className="w-5 h-5 text-orange-500" /><span>Lance o faturamento e estoques</span></div>)}
-        </div>
-      </div>
     </div>
   )
 }
