@@ -42,7 +42,7 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
     lancamentos.compras.forEach((c: any) => { comprasInsumos += (c.quantidade * c.valorUnitario) })
   }
 
-  // 3. CÁLCULO DE ABATIMENTOS INTELIGENTE
+  // 3. CÁLCULO DE ABATIMENTOS
   let abatimentos = 0
   let custoDRETotal = (lancamentos.outrosCustos?.embalagens || 0) + (lancamentos.outrosCustos?.materialLimpeza || 0)
 
@@ -157,7 +157,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
                 <p className="font-medium">Nenhuma compra registada esta semana.</p>
               </div>
             )}
-            <div className="p-4 bg-slate-50 rounded-b-3xl border-t text-center"><button className="text-sm font-bold text-blue-600 flex items-center justify-center gap-1 w-full hover:text-blue-700">Ver todas as compras <ChevronRight className="w-4 h-4" /></button></div>
           </CardContent>
         </Card>
       </div>
