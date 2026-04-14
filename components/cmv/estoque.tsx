@@ -63,7 +63,20 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
     if (isReadOnly) return toast.error("Período travado para edições!")
     const tipo = aba === "inicial" ? "Inicial" : "Final"
     await supabase.from('estoques').delete().eq('tipo_contagem', tipo).gte('data_contagem', dataInicio).lte('data_contagem', dataFim)
-    const inserts = Object.entries(contagem).map(([id, d]) => ({ produto_id: parseInt(id), quantidade: parseFloat(d.qtd.replace(',', '.')), valor_unitario: parseFloat(d.valor.replace(',', '.')), tipo_contagem: tipo, data_contagem: dataInicio })).filter(i => !isNaN(i.quantidade) && !isNaN(i.valor_unitario))
+    
+    const inserts = Object.entries(contagem).map(([id, d]) => {
+      // Se for Estoque Final, ele espelha o custo que estava no Estoque Inicial automaticamente
+      const valorCorreto = tipo === "Final" ? (contagemInicial[parseInt(id)]?.valor || "0") : d.valor;
+      
+      return {
+        produto_id: parseInt(id), 
+        quantidade: parseFloat(d.qtd.replace(',', '.')), 
+        valor_unitario: parseFloat(valorCorreto.replace(',', '.')), 
+        tipo_contagem: tipo, 
+        data_contagem: dataInicio 
+      }
+    }).filter(i => !isNaN(i.quantidade) && !isNaN(i.valor_unitario))
+    
     if (inserts.length > 0) {
       await supabase.from('estoques').insert(inserts)
       toast.success(`Estoque ${tipo} salvo!`); onChange();
@@ -161,7 +174,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
           </div>
         )}
 
-        {/* ABA DE SAÍDAS DEVOLVIDA PRO LUGAR DELA */}
         {aba === "saidas" && (
           <div className="space-y-6">
             {!isReadOnly && (
@@ -221,16 +233,28 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
                     <p className="font-bold text-slate-700">{p.nome}</p>
                     <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1 rounded-md">{p.unidade}</span>
                   </div>
+                  
                   <div className="flex gap-2">
                     <div className="flex-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase">Qtd Real</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Qtd Real</label>
                       <input type="text" disabled={isReadOnly} className="w-full p-2 border rounded-lg text-sm font-bold disabled:bg-slate-100 outline-none focus:border-blue-500" value={contagem[p.id]?.qtd || ""} onChange={e => setContagem({ ...contagem, [p.id]: { ...contagem[p.id], qtd: e.target.value } })} />
                     </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase">R$ Unitário</label>
-                      <input type="text" disabled={isReadOnly} className="w-full p-2 border rounded-lg text-sm font-bold disabled:bg-slate-100 outline-none focus:border-blue-500" value={contagem[p.id]?.valor || ""} onChange={e => setContagem({ ...contagem, [p.id]: { ...contagem[p.id], valor: e.target.value } })} />
-                    </div>
+                    
+                    {aba === "inicial" ? (
+                      <div className="flex-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">R$ Unitário</label>
+                        <input type="text" disabled={isReadOnly} className="w-full p-2 border rounded-lg text-sm font-bold disabled:bg-slate-100 outline-none focus:border-blue-500" value={contagem[p.id]?.valor || ""} onChange={e => setContagem({ ...contagem, [p.id]: { ...contagem[p.id], valor: e.target.value } })} />
+                      </div>
+                    ) : (
+                      <div className="flex-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Custo Aplicado</label>
+                        <div className="w-full p-2 bg-slate-50 border border-slate-100 rounded-lg text-sm font-bold text-slate-400 flex items-center h-[38px] overflow-hidden">
+                          {formatBRL(parseFloat(contagemInicial[p.id]?.valor?.replace(',', '.') || "0"))}
+                        </div>
+                      </div>
+                    )}
                   </div>
+
                 </div>
               ))}
             </div>
