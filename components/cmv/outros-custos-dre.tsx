@@ -1,99 +1,129 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { ReceiptText, CheckCircle2, Package, Trash2, Box } from "lucide-react"
+import { Save, Receipt, Truck, Calculator, Package, Lock } from "lucide-react"
 import { supabase } from "@/lib/supabase"
+import { toast } from "react-hot-toast"
 
-interface OutrosCustasProps {
-  data: any
-  dataInicio: string
-  dataFim: string
-  onChange: () => void
+const formatBRL = (v: number) => {
+  if (isNaN(v) || v === null) return "R$ 0,00"
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+}
+const formatPerc = (v: number) => {
+  if (isNaN(v) || v === null || !isFinite(v)) return "0.0%"
+  return `${v.toFixed(1)}%`
 }
 
-const OUTROS_CAMPOS = [
-  { key: "embalagens", label: "Embalagens", desc: "Caixas, sacos, etc.", icon: Box },
-  { key: "materialLimpeza", label: "Material de Limpeza", desc: "Detergente, cloro, etc.", icon: Package },
-  { key: "desperdicios", label: "Desperdícios", desc: "Queimas, erros (que não são insumos)", icon: Trash2 },
-]
-
-export function OutrosCustosDRE({ data, dataInicio, dataFim, onChange }: OutrosCustasProps) {
-  const [valores, setValores] = useState<Record<string, string>>({})
-  const [salvando, setSalvando] = useState(false)
-  const [salvo, setSalvo] = useState(false)
+export function OutrosCustosDRE({ data, dataInicio, dataFim, onChange, isReadOnly }: any) {
+  // A FUNÇÃO BLINDADA: Lê com segurança ou retorna "0"
+  const getVal = (val: any) => val ? val.toString() : "0"
+  
+  const [embalagens, setEmbalagens] = useState("0")
+  const [limpeza, setLimpeza] = useState("0")
 
   useEffect(() => {
-    setValores({
-      embalagens: String(data.outrosCustos.embalagens || ""),
-      materialLimpeza: String(data.outrosCustos.materialLimpeza || ""),
-      desperdicios: String(data.outrosCustos.desperdicios || "")
-    })
-  }, [data.outrosCustos])
+    // Agora nunca mais crasha mesmo se o objeto inteiro for undefined
+    if (data && data.outrosCustos) {
+      setEmbalagens(getVal(data.outrosCustos.embalagens))
+      setLimpeza(getVal(data.outrosCustos.materialLimpeza))
+    } else {
+      setEmbalagens("0")
+      setLimpeza("0")
+    }
+  }, [data])
 
   const handleSalvar = async () => {
-    setSalvando(true)
+    if (isReadOnly) return toast.error("Este período já foi encerrado. Edições bloqueadas.")
+
+    const valEmb = parseFloat(embalagens.replace(',', '.')) || 0
+    const valLimp = parseFloat(limpeza.replace(',', '.')) || 0
+
+    const { data: existente } = await supabase.from('financas_semanais').select('id').eq('data_inicio', dataInicio).maybeSingle()
     
-    // Atualiza apenas os campos desta tela, preservando o faturamento e os consumos antigos se houver
-    const payload = {
-      data_inicio: dataInicio,
-      data_fim: dataFim,
-      embalagens: parseFloat(valores.embalagens.replace(",", ".")) || 0,
-      material_limpeza: parseFloat(valores.materialLimpeza.replace(",", ".")) || 0,
-      desperdicios: parseFloat(valores.desperdicios.replace(",", ".")) || 0
-    }
-
-    const { data: fData } = await supabase.from('financas_semanais').select('id').eq('data_inicio', dataInicio).eq('data_fim', dataFim).maybeSingle()
-
     let error;
-    if (fData) {
-      const res = await supabase.from('financas_semanais').update(payload).eq('id', fData.id)
-      error = res.error
+    if (existente) {
+      const { error: err } = await supabase.from('financas_semanais').update({ embalagens: valEmb, material_limpeza: valLimp }).eq('id', existente.id)
+      error = err;
     } else {
-      const res = await supabase.from('financas_semanais').insert([payload])
-      error = res.error
+      const { error: err } = await supabase.from('financas_semanais').insert([{ data_inicio: dataInicio, data_fim: dataFim, embalagens: valEmb, material_limpeza: valLimp, faturamento: 0 }])
+      error = err;
     }
 
-    if (!error) {
-      setSalvo(true)
-      setTimeout(() => setSalvo(false), 2000)
+    if (error) toast.error("Erro ao salvar custos.")
+    else {
+      toast.success("Custos atualizados com sucesso!")
       onChange()
-    } else {
-      alert("Erro ao salvar: " + error.message)
     }
-    setSalvando(false)
   }
 
+  const fat = data?.faturamento || 0
+  const vEmb = parseFloat(embalagens.replace(',', '.')) || 0
+  const vLimp = parseFloat(limpeza.replace(',', '.')) || 0
+  const totalCustos = vEmb + vLimp
+  const percCustos = fat > 0 ? (totalCustos / fat) * 100 : 0
+
   return (
-    <div className="space-y-6 pb-24">
-      <div>
-        <h2 className="text-2xl font-bold text-foreground mb-1">Custos Operacionais (DRE)</h2>
-        <p className="text-muted-foreground text-base">Registe apenas despesas com materiais não comestíveis.</p>
+    <div className="space-y-6">
+      
+      {isReadOnly && (
+        <div className="bg-amber-100 border-l-4 border-amber-500 text-amber-700 p-4 rounded-xl flex items-center gap-3 shadow-sm">
+          <Lock className="w-5 h-5"/>
+          <p className="font-bold text-sm">MODO VISUALIZAÇÃO: Este período já foi encerrado e os dados estão protegidos contra alterações.</p>
+        </div>
+      )}
+
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl border shadow-sm">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><Receipt className="w-6 h-6 text-blue-600"/> Outros Custos (DRE)</h2>
+          <p className="text-slate-500 text-sm font-medium mt-1">Lançamento de custos operacionais paralelos ao CMV da semana.</p>
+        </div>
+        {!isReadOnly && (
+          <button onClick={handleSalvar} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 shadow-sm flex items-center gap-2 transition-all hover:scale-105">
+            <Save className="w-4 h-4"/> Salvar Custos
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {OUTROS_CAMPOS.map(({ key, label, desc, icon: Icon }) => (
-          <div key={key} className="bg-card rounded-2xl border-2 p-5 shadow-sm hover:border-[#C0392B]/50 transition-colors">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 bg-muted rounded-xl text-muted-foreground"><Icon className="w-6 h-6" /></div>
-              <div><h4 className="font-bold text-foreground">{label}</h4><p className="text-xs text-muted-foreground">{desc}</p></div>
-            </div>
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-muted-foreground">R$</span>
-              <input 
-                type="number" min="0" step="0.01" placeholder="0,00"
-                value={valores[key] || ""}
-                onChange={(e) => setValores({ ...valores, [key]: e.target.value })}
-                className="w-full text-xl font-bold pl-12 pr-4 py-3 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none" 
-              />
-            </div>
-          </div>
-        ))}
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white p-8 rounded-3xl border shadow-sm space-y-6">
+           <h3 className="font-black text-lg text-slate-800 border-b border-slate-100 pb-4">Despesas da Semana</h3>
+           
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                 <label className="text-[10px] font-black text-slate-500 uppercase flex items-center gap-1"><Package className="w-3 h-3 text-amber-500"/> Embalagens (Caixas, sacolas)</label>
+                 <div className="relative">
+                   <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span>
+                   <input type="text" disabled={isReadOnly} value={embalagens} onChange={e => setEmbalagens(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-amber-500 disabled:opacity-60 disabled:cursor-not-allowed" />
+                 </div>
+              </div>
+              <div className="space-y-2">
+                 <label className="text-[10px] font-black text-slate-500 uppercase flex items-center gap-1"><Truck className="w-3 h-3 text-emerald-500"/> Material de Limpeza</label>
+                 <div className="relative">
+                   <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span>
+                   <input type="text" disabled={isReadOnly} value={limpeza} onChange={e => setLimpeza(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed" />
+                 </div>
+              </div>
+           </div>
+        </div>
 
-      <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 z-50">
-        <button onClick={handleSalvar} disabled={salvando} className={`flex items-center justify-center gap-3 text-xl font-extrabold py-5 px-8 rounded-2xl shadow-2xl w-full max-w-lg transition-all ${salvo ? "bg-[#1E6B43] text-white" : "bg-[#C0392B] text-white hover:bg-[#9B2B1F]"}`}>
-          {salvando ? "A Guardar..." : salvo ? <><CheckCircle2 className="w-7 h-7" /> Salvo com Sucesso!</> : <><ReceiptText className="w-7 h-7" /> Guardar Custos</>}
-        </button>
+        <div className="bg-slate-900 text-white p-8 rounded-3xl shadow-lg flex flex-col justify-center">
+           <p className="text-[10px] font-black text-slate-400 uppercase mb-4 flex items-center gap-2"><Calculator className="w-4 h-4"/> Impacto no Faturamento</p>
+           
+           <div className="space-y-4">
+             <div className="flex justify-between items-center border-b border-white/10 pb-4">
+               <span className="font-bold text-slate-300">Faturamento da Semana</span>
+               <span className="font-black text-emerald-400">{formatBRL(fat)}</span>
+             </div>
+             <div className="flex justify-between items-center border-b border-white/10 pb-4">
+               <span className="font-bold text-slate-300">Total Outros Custos</span>
+               <span className="font-black text-red-400">{formatBRL(totalCustos)}</span>
+             </div>
+             <div className="flex justify-between items-center pt-2">
+               <span className="text-xs font-black text-slate-400 uppercase">Impacto Final (%)</span>
+               <span className="text-3xl font-black text-white">{formatPerc(percCustos)}</span>
+             </div>
+           </div>
+        </div>
       </div>
     </div>
   )
