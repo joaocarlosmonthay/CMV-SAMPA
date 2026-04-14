@@ -59,29 +59,54 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
     toast.success("Removido com sucesso!"); onChange();
   }
 
+  // A FUNÇÃO BLINDADA: Nunca mais vai falhar em silêncio.
   const handleSalvarContagem = async () => {
     if (isReadOnly) return toast.error("Período travado para edições!")
     const tipo = aba === "inicial" ? "Inicial" : "Final"
-    await supabase.from('estoques').delete().eq('tipo_contagem', tipo).gte('data_contagem', dataInicio).lte('data_contagem', dataFim)
-    
-    const inserts = Object.entries(contagem).map(([id, d]) => {
-      // Se for Estoque Final, ele espelha o custo que estava no Estoque Inicial automaticamente
-      const valorCorreto = tipo === "Final" ? (contagemInicial[parseInt(id)]?.valor || "0") : d.valor;
-      
-      return {
-        produto_id: parseInt(id), 
-        quantidade: parseFloat(d.qtd.replace(',', '.')), 
-        valor_unitario: parseFloat(valorCorreto.replace(',', '.')), 
-        tipo_contagem: tipo, 
-        data_contagem: dataInicio 
+
+    toast.loading(`Salvando Estoque ${tipo}...`, { id: "salva-estoque" })
+
+    try {
+      // Deleta o registro anterior para evitar duplicação
+      const { error: errDel } = await supabase.from('estoques').delete().eq('tipo_contagem', tipo).gte('data_contagem', dataInicio).lte('data_contagem', dataFim)
+      if (errDel) throw errDel;
+
+      const inserts = Object.entries(contagem).map(([id, d]) => {
+        // Pega com segurança e previne undefined
+        const qtdStr = d && d.qtd ? String(d.qtd).trim() : "";
+        let valStr = d && d.valor ? String(d.valor).trim() : "";
+
+        // Se for Final, espelha do inicial
+        if (tipo === "Final") {
+          valStr = contagemInicial[parseInt(id)]?.valor ? String(contagemInicial[parseInt(id)].valor).trim() : "0";
+        }
+
+        // Tenta converter, se der errado por sujeira, vira NaN (que a gente filtra na linha de baixo)
+        const q = parseFloat(qtdStr.replace(',', '.'));
+        const v = parseFloat(valStr.replace(',', '.'));
+
+        return {
+          produto_id: parseInt(id),
+          quantidade: isNaN(q) ? null : q,
+          valor_unitario: isNaN(v) ? 0 : v,
+          tipo_contagem: tipo,
+          data_contagem: dataInicio
+        }
+      }).filter(i => i.quantidade !== null) // Filtro: só vai para o banco o que realmente for número.
+
+      if (inserts.length > 0) {
+        const { error: insErr } = await supabase.from('estoques').insert(inserts)
+        if (insErr) throw insErr;
+        toast.success(`Estoque ${tipo} salvo com sucesso!`, { id: "salva-estoque" });
+      } else {
+        toast.success(`Estoque ${tipo} atualizado (Vazio)!`, { id: "salva-estoque" });
       }
-    }).filter(i => !isNaN(i.quantidade) && !isNaN(i.valor_unitario))
-    
-    if (inserts.length > 0) {
-      await supabase.from('estoques').insert(inserts)
-      toast.success(`Estoque ${tipo} salvo!`); onChange();
-    } else {
-      toast.success(`Estoque limpo!`); onChange();
+      
+      await onChange();
+
+    } catch (error: any) {
+      // Se algo bizarro acontecer no banco, ele mostra na tela.
+      toast.error("Erro no sistema ao salvar: " + error.message, { id: "salva-estoque", duration: 5000 });
     }
   }
 
@@ -192,7 +217,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
                   <label className="text-[10px] font-black text-slate-500 uppercase">Motivo</label>
                   <select className="p-3 rounded-xl border font-bold outline-none focus:border-amber-500" value={novoLancamento.motivo} onChange={e => setNovoLancamento({ ...novoLancamento, motivo: e.target.value })}>
                     <option value="Quebra/Desperdício">Prensadão</option>
-                    <option value="Quebra/Desperdício">Desperdicio</option>
+                    <option value="Quebra/Desperdício">Desperdício</option>
                     <option value="Refeição Funcionários">Refeição Funcionários</option>
                     <option value="Vencido">Vencido</option>
                     <option value="Outros">Outros</option>
