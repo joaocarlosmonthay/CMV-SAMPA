@@ -44,6 +44,7 @@ function CMVApp() {
   const [tela, setTela] = useState<string>("dashboard")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isFechando, setIsFechando] = useState(false)
+  
   const [semanaAberta, setSemanaAberta] = useState(false) 
   
   const [dataInicio, setDataInicio] = useState("")
@@ -51,6 +52,7 @@ function CMVApp() {
   const [semanaOficial, setSemanaOficial] = useState<string>("") 
 
   const [produtos, setProdutos] = useState<any[]>([])
+  const [categorias, setCategorias] = useState<any[]>([]) 
   const [lancamentos, setLancamentos] = useState<any>({ faturamento: 0, compras: [], saidas: [], outrosCustos: {} })
   const [contagemInicial, setContagemInicial] = useState<ContagemEstoque>({})
   const [contagemFinal, setContagemFinal] = useState<ContagemEstoque>({})
@@ -85,7 +87,7 @@ function CMVApp() {
         setDataFim(calcularDataFim(dataSugerida))
         setSemanaAberta(false)
       }
-      carregarProdutos()
+      carregarTudo()
     }
     initApp()
   }, [])
@@ -96,39 +98,51 @@ function CMVApp() {
     }
   }, [dataInicio, dataFim, semanaAberta])
 
-  // AJUSTADO PARA O SCRIPT DE VILHENA (Tabela 'grupos')
-  const carregarProdutos = async () => {
-    const { data, error } = await supabase
-      .from('produtos')
-      .select('*, grupos(nome)')
-      .order('nome')
-    
-    if (error) {
-      console.error("Erro ao carregar produtos:", error)
-      return
-    }
-    
-    // Mapeia para o formato que o componente Cadastros espera
-    const formatados = (data || []).map(p => ({
-      ...p,
-      unidade: p.unidade_medida, // Vilhena usa unidade_medida
-      grupo: p.grupos?.nome || 'Sem Grupo'
-    }))
-    
-    setProdutos(formatados)
+  const carregarTudo = async () => {
+    const [{ data: prods }, { data: cats }] = await Promise.all([
+      supabase.from('produtos').select('*').order('nome'),
+      supabase.from('categorias').select('*').order('nome')
+    ])
+    if (prods) setProdutos(prods)
+    if (cats) setCategorias(cats)
+  }
+
+  const handleSalvarCategoria = async (nome: string) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    const { error } = await supabase.from('categorias').insert([{ nome }])
+    if (error) toast.error("Erro ao salvar categoria. Pode já existir.")
+    else { toast.success("Categoria salva!"); carregarTudo(); }
+  }
+
+  const handleExcluirCategoria = async (id: number) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    if (!confirm("Excluir esta categoria?")) return
+    const { error } = await supabase.from('categorias').delete().eq('id', id)
+    if (error) toast.error("Erro ao excluir!")
+    else { toast.success("Categoria removida!"); carregarTudo(); }
   }
 
   const handleSalvarProdutoNoBanco = async (novoProd: any) => {
     if (isReadOnly) return toast.error("Período travado!")
-    // Ajusta o objeto para o padrão do banco de Vilhena
-    const payload = {
-      nome: novoProd.nome,
-      unidade_medida: novoProd.unidade,
-      grupo_id: novoProd.grupo_id
-    }
-    const { error } = await supabase.from('produtos').insert([payload])
+    const { id, ...produtoLimpo } = novoProd
+    const { error } = await supabase.from('produtos').insert([produtoLimpo])
     if (error) toast.error("Erro ao salvar: " + error.message)
-    else { toast.success("Produto salvo!"); carregarProdutos(); }
+    else { toast.success("Produto salvo!"); carregarTudo(); }
+  }
+
+  const handleEditarProdutoNoBanco = async (id: number, dadosEditados: any) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    const { error } = await supabase.from('produtos').update(dadosEditados).eq('id', id)
+    if (error) toast.error("Erro ao atualizar: " + error.message)
+    else { toast.success("Produto atualizado!"); carregarTudo(); }
+  }
+
+  const handleExcluirProdutoNoBanco = async (id: number) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    if (!confirm("Tem certeza que deseja excluir este produto?")) return
+    const { error } = await supabase.from('produtos').delete().eq('id', id)
+    if (error) toast.error("Erro ao excluir!")
+    else { toast.success("Produto removido!"); carregarTudo(); }
   }
 
   const carregarDadosDoBanco = async () => {
@@ -151,11 +165,7 @@ function CMVApp() {
 
     setLancamentos({
       faturamento: fRes.data?.faturamento || 0,
-      outrosCustos: { 
-        embalagens: fRes.data?.embalagens || 0, 
-        materialLimpeza: fRes.data?.material_limpeza || 0,
-        consumoSocios: fRes.data?.consumo_socios || 0 // Coluna extra de Vilhena
-      },
+      outrosCustos: { embalagens: fRes.data?.embalagens || 0, materialLimpeza: fRes.data?.material_limpeza || 0 },
       compras: (cRes.data || []).map(c => ({ id: c.id, produto: c.produtos?.nome || "Insumo", quantidade: c.quantidade, valorUnitario: c.valor_unitario, valorTotal: c.quantidade * c.valor_unitario })),
       saidas: (sRes.data || []).map(s => ({ id: s.id, produto: s.produtos?.nome || "Insumo", quantidade: s.quantidade, motivo: s.motivo }))
     })
@@ -176,12 +186,15 @@ function CMVApp() {
       const d = new Date(semanaOficial + "T12:00:00")
       d.setDate(d.getDate() + 7)
       const novaSegunda = d.toISOString().split('T')[0]
+      
       setSemanaOficial(novaSegunda)
       setDataInicio(novaSegunda)
       setDataFim(calcularDataFim(novaSegunda))
+      
       localStorage.removeItem('sampa_semanaAberta')
       localStorage.removeItem('sampa_dataInicio')
       setSemanaAberta(false) 
+      
       setIsFechando(false)
       setTela("dashboard")
     }, 1500)
@@ -194,10 +207,10 @@ function CMVApp() {
       <Toaster position="bottom-right" />
 
       {isFechando && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center text-white">
-          <div className="flex flex-col items-center">
-             <RefreshCw className="w-12 h-12 animate-spin mb-4" />
-             <h3 className="text-2xl font-black">Fechando Ciclo...</h3>
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center">
+          <div className="bg-white p-12 rounded-[40px] shadow-2xl flex flex-col items-center">
+             <RefreshCw className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+             <h3 className="text-2xl font-black text-slate-800">Iniciando Próximo Ciclo...</h3>
           </div>
         </div>
       )}
@@ -205,7 +218,7 @@ function CMVApp() {
       {semanaAberta && (
         <aside className={`fixed inset-y-0 left-0 z-40 w-72 bg-slate-900 text-slate-300 transition-transform lg:relative lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
           <div className="flex flex-col h-full p-6">
-            <div className="flex items-center gap-3 mb-10"><Pizza className="w-8 h-8 text-blue-500" /><h1 className="font-black text-xl text-white">Sampa Vilhena</h1></div>
+            <div className="flex items-center gap-3 mb-10"><Pizza className="w-8 h-8 text-blue-500" /><h1 className="font-black text-xl text-white">Sampa Cacoal</h1></div>
             <nav className="flex-1 space-y-2">
               {[
                 { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -236,30 +249,72 @@ function CMVApp() {
                   <input type="date" value={dataInicio} onChange={(e) => {setDataInicio(e.target.value); setDataFim(calcularDataFim(e.target.value));}} className="font-black text-sm bg-transparent outline-none cursor-pointer text-slate-800" />
                 </div>
               </div>
+              
+              {/* O CÓDIGO DA VACINA ESTÁ AQUI NESTE BOTÃO 👇 */}
+              {isReadOnly && (
+                <button 
+                  onClick={() => {
+                    setDataInicio(semanaOficial); 
+                    setDataFim(calcularDataFim(semanaOficial)); 
+                    localStorage.setItem('sampa_dataInicio', semanaOficial); // Isso apaga a memória errada do PC dele!
+                    toast.success("Sincronizado! O sistema voltou ao normal.");
+                  }} 
+                  className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-blue-700 transition-colors"
+                >
+                  Voltar p/ Atual <ArrowRight className="w-4 h-4"/>
+                </button>
+              )}
             </div>
-            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold">SV</div>
           </header>
         )}
 
         <main className="flex-1 overflow-y-auto p-8 bg-slate-50">
           {!semanaAberta ? (
             <div className="min-h-[80vh] flex flex-col items-center justify-center">
-               <div className="bg-white p-12 rounded-[40px] shadow-2xl border flex flex-col items-center text-center max-w-md w-full">
+               <div className="bg-white p-12 rounded-[40px] shadow-2xl border flex flex-col items-center text-center max-w-md w-full animate-in fade-in zoom-in duration-500">
                   <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mb-6">
                     <Lock className="w-10 h-10 text-blue-600" />
                   </div>
-                  <h2 className="text-3xl font-black text-slate-800 mb-2">Novo Ciclo</h2>
+                  <h2 className="text-3xl font-black text-slate-800 mb-2">Iniciar Novo Ciclo</h2>
+                  <p className="text-slate-500 mb-8 font-medium">Sugerimos a data abaixo, mas você pode ajustá-la se necessário.</p>
+                  
                   <div className="w-full text-left mb-8 group">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-4 flex items-center gap-1">Data de Início <Edit3 className="w-3 h-3"/></label>
-                    <input type="date" value={dataInicio} onChange={(e) => {setDataInicio(e.target.value); setDataFim(calcularDataFim(e.target.value));}} className="w-full p-4 rounded-2xl bg-white border-2 border-slate-200 font-black text-2xl text-center outline-none focus:border-blue-500 mt-1" />
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-4 flex items-center gap-1">
+                      Data de Início <Edit3 className="w-3 h-3"/>
+                    </label>
+                    <input 
+                      type="date" 
+                      value={dataInicio} 
+                      onChange={(e) => {
+                        setDataInicio(e.target.value); 
+                        setDataFim(calcularDataFim(e.target.value));
+                      }} 
+                      className="w-full p-4 rounded-2xl bg-white border-2 border-slate-200 font-black text-2xl text-center outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50/50 transition-all mt-1 text-slate-800" 
+                    />
                   </div>
-                  <button onClick={iniciarSemana} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-lg hover:scale-[1.02] transition-all shadow-lg flex items-center justify-center gap-2">Confirmar e Acessar <ArrowRight className="w-5 h-5"/></button>
-               </div>
+
+                  <button onClick={iniciarSemana} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-lg hover:scale-[1.02] hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2">
+                    Confirmar e Acessar <ArrowRight className="w-5 h-5"/>
+                  </button>
+               </div> 
             </div>
           ) : (
             <div className="max-w-7xl mx-auto">
               {tela === "dashboard" && <Dashboard dataInicio={dataInicio} dataFim={dataFim} lancamentos={lancamentos} contagemInicial={contagemInicial} contagemFinal={contagemFinal} produtos={produtos} />}
-              {tela === "cadastros" && <Cadastros produtos={produtos} onAddProduto={handleSalvarProdutoNoBanco} />}
+              
+              {tela === "cadastros" && (
+                <Cadastros 
+                  produtos={produtos} 
+                  categorias={categorias} 
+                  onAddProduto={handleSalvarProdutoNoBanco} 
+                  onEditProduto={handleEditarProdutoNoBanco} 
+                  onDeleteProduto={handleExcluirProdutoNoBanco} 
+                  onAddCategoria={handleSalvarCategoria} 
+                  onDeleteCategoria={handleExcluirCategoria} 
+                  isReadOnly={isReadOnly} 
+                />
+              )}
+              
               {tela === "outros-custos" && <OutrosCustosDRE data={lancamentos} dataInicio={dataInicio} dataFim={dataFim} onChange={carregarDadosDoBanco} isReadOnly={isReadOnly} />}
               {tela === "relatorios" && <Relatorios produtos={produtos} />}
               {tela === "estoque" && (
