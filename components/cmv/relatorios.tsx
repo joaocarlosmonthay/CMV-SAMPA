@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { TrendingUp, TrendingDown, Calculator, Pizza, PackageOpen, List, X, CalendarDays, Search, ReceiptText, Filter } from "lucide-react"
+import { TrendingUp, TrendingDown, Calculator, Pizza, PackageOpen, List, X, CalendarDays, Search, ReceiptText, Filter, Flame } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
 const formatBRL = (v: number) => {
@@ -15,9 +15,9 @@ const formatPerc = (v: number) => {
 
 export function Relatorios({ produtos }: { produtos: any[] }) {
   const [filtroCategoria, setFiltroCategoria] = useState<"Geral" | "Cozinha" | "Bebidas">("Geral")
-  const [modalAberto, setModalAberto] = useState<"compras" | "consumo" | null>(null)
   const [semanasData, setSemanasData] = useState<any[]>([])
   const [semanaSelecionadaModal, setSemanaSelecionadaModal] = useState<string>("")
+  const [loading, setLoading] = useState(true)
   
   // FILTRO DE MÊS: Por padrão pega o mês atual
   const [mesSelecionado, setMesSelecionado] = useState(() => {
@@ -25,54 +25,89 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
     return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`
   })
 
-  const carregarDados = async () => {
-    // Pega as datas do mês selecionado para filtrar
-    const ano = parseInt(mesSelecionado.split('-')[0])
-    const mes = parseInt(mesSelecionado.split('-')[1]) - 1
-    const startDate = new Date(ano, mes, 1).toISOString().split('T')[0]
-    const endDate = new Date(ano, mes + 1, 0).toISOString().split('T')[0]
+  useEffect(() => {
+    const carregarDados = async () => {
+      setLoading(true)
 
-    // Busca apenas as semanas que caem dentro deste mês
-    const { data: financas } = await supabase.from('financas_semanais')
-        .select('*')
-        .gte('data_fim', startDate)
-        .lte('data_inicio', endDate)
-        .order('data_inicio', { ascending: true }) // Ascending para a Semana 1 ser a primeira da tabela
+      // 1. Busca TODAS as semanas já lançadas na história da pizzaria (Ordem Crescente)
+      const { data: todasFinancas } = await supabase.from('financas_semanais').select('*').order('data_inicio', { ascending: true })
 
-    if (!financas || financas.length === 0) {
-      setSemanasData([])
-      return
-    }
+      if (!todasFinancas || todasFinancas.length === 0) {
+        setSemanasData([])
+        setLoading(false)
+        return
+      }
 
-    const oDate = financas[0].data_inicio
-    const nDate = financas[financas.length - 1].data_fim
+      // 2. Numera absolutamente (Semana 1, Semana 2 ... Semana 26 ...)
+      const financasNumeradas = todasFinancas.map((f, i) => ({
+        ...f,
+        numeroAbsoluto: i + 1
+      }))
 
-    const { data: compras } = await supabase.from('compras').select('*').gte('data_compra', oDate).lte('data_compra', nDate)
-    const { data: estoques } = await supabase.from('estoques').select('*').gte('data_contagem', oDate).lte('data_contagem', nDate)
+      // 3. Filtra apenas as semanas que caem no mês selecionado pelo usuário
+      const financasDoMes = financasNumeradas.filter(f => f.data_inicio.startsWith(mesSelecionado))
 
-    const semanasProcessadas = financas.map((f, index) => {
-        let comp = compras?.filter(c => c.data_compra >= f.data_inicio && c.data_compra <= f.data_fim) || []
-        let est = estoques?.filter(e => e.data_contagem >= f.data_inicio && e.data_contagem <= f.data_fim) || []
+      if (financasDoMes.length === 0) {
+        setSemanasData([])
+        setLoading(false)
+        return
+      }
 
+      // 4. Pega os dados do BD de uma vez só para essas semanas
+      const oldestDate = financasDoMes[0].data_inicio
+      const newestDate = financasDoMes[financasDoMes.length - 1].data_fim || financasDoMes[financasDoMes.length - 1].data_inicio
+
+      const { data: dbCompras } = await supabase.from('compras').select('*').gte('data_compra', oldestDate).lte('data_compra', newestDate)
+      const { data: dbEstoques } = await supabase.from('estoques').select('*').gte('data_contagem', oldestDate).lte('data_contagem', newestDate)
+
+      // 5. Processa cada semana do mês para a Tabela e o Ranking
+      const semanasProcessadas = financasDoMes.map(f => {
+        let comp = dbCompras?.filter(c => c.data_compra >= f.data_inicio && c.data_compra <= f.data_fim) || []
+        let est = dbEstoques?.filter(e => e.data_contagem >= f.data_inicio && e.data_contagem <= f.data_fim) || []
+
+        // Aplica o filtro de Categoria (Cozinha x Bebidas)
         let prodsFiltrados = produtos || []
-        if (filtroCategoria === "Cozinha") prodsFiltrados = produtos.filter(p => p.grupo !== "Bebidas" && p.grupo !== "Embalagens" && p.grupo !== "Limpeza")
-        else if (filtroCategoria === "Bebidas") prodsFiltrados = produtos.filter(p => p.grupo === "Bebidas")
+        if (filtroCategoria === "Cozinha") {
+          prodsFiltrados = produtos.filter(p => p.grupo !== "Bebidas" && p.grupo !== "Embalagens" && p.grupo !== "Limpeza" && p.grupo !== "Outros")
+        } else if (filtroCategoria === "Bebidas") {
+          prodsFiltrados = produtos.filter(p => p.grupo === "Bebidas")
+        }
 
         comp = comp.filter(c => prodsFiltrados.find(p => p.id === c.produto_id))
         est = est.filter(e => prodsFiltrados.find(p => p.id === e.produto_id))
 
-        const totalCompras = comp.reduce((acc, c) => acc + parseFloat(c.valor_unitario), 0)
+        const totalCompras = comp.reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
         const inicial = est.filter(e => e.tipo_contagem === 'Inicial').reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
         const final = est.filter(e => e.tipo_contagem === 'Final').reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
 
+        // Lógica do Ranking Detalhado (Tinha + Comprou - Sobrou)
         const consumoDetalhado = prodsFiltrados.map(p => {
           const eI = est.find(e => e.produto_id === p.id && e.tipo_contagem === 'Inicial')
           const eF = est.find(e => e.produto_id === p.id && e.tipo_contagem === 'Final')
           const cP = comp.filter(c => c.produto_id === p.id)
-          const qI = eI ? parseFloat(eI.quantidade) : 0, vI = eI ? parseFloat(eI.valor_unitario) : 0, qF = eF ? parseFloat(eF.quantidade) : 0
-          const cQ = cP.reduce((a, c) => a + parseFloat(c.quantidade), 0), cT = cP.reduce((a, c) => a + parseFloat(c.valor_unitario), 0)
-          const qC = (qI + cQ) - qF, pM = cQ > 0 ? (cT / cQ) : vI
-          return { item: p.nome, unidade: p.unidade, qtdConsumida: qC, valorConsumido: qC * pM }
+          
+          const qtdIni = eI ? parseFloat(eI.quantidade) : 0
+          const valIni = eI ? parseFloat(eI.valor_unitario) : 0
+          
+          let qtdComp = 0, custoComp = 0
+          cP.forEach(c => {
+            qtdComp += parseFloat(c.quantidade)
+            custoComp += parseFloat(c.quantidade) * parseFloat(c.valor_unitario)
+          })
+
+          const qtdFin = eF ? parseFloat(eF.quantidade) : 0
+          const valFin = eF ? parseFloat(eF.valor_unitario) : valIni
+          
+          const custoConsumido = (qtdIni * valIni) + custoComp - (qtdFin * valFin)
+          const qtdConsumida = qtdIni + qtdComp - qtdFin
+
+          return { 
+            item: p.nome, 
+            unidade: p.unidade, 
+            grupo: p.grupo,
+            qtdIni, qtdComp, qtdFin, qtdConsumida,
+            valorConsumido: custoConsumido > 0 ? custoConsumido : 0 
+          }
         }).filter(i => i.valorConsumido > 0).sort((a, b) => b.valorConsumido - a.valorConsumido)
 
         const dFinal = new Date(f.data_inicio + "T12:00:00")
@@ -80,80 +115,131 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
         const strFim = dFinal.toISOString().split('T')[0]
         const dataVisual = `${f.data_inicio.split('-')[2]}/${f.data_inicio.split('-')[1]} a ${strFim.split('-')[2]}/${strFim.split('-')[1]}`
 
-        return { id: f.data_inicio, nome: `Semana ${index + 1}`, periodo: dataVisual, faturamento: f.faturamento, inicial, compras: totalCompras, final, consumoDetalhado, comprasDetalhadas: comp }
-    })
-    setSemanasData(semanasProcessadas)
-    
-    // Seleciona a última semana do mês por padrão no dropdown do Modal
-    if (semanasProcessadas.length > 0) {
-        setSemanaSelecionadaModal(semanasProcessadas[semanasProcessadas.length - 1].id)
+        return { 
+          id: f.data_inicio, 
+          nome: `Semana ${f.numeroAbsoluto}`, // AGORA FICA CERTO: "Semana 26"
+          periodo: dataVisual, 
+          faturamento: f.faturamento, 
+          inicial, 
+          compras: totalCompras, 
+          final, 
+          cmvValor: inicial + totalCompras - final,
+          consumoDetalhado 
+        }
+      })
+
+      setSemanasData(semanasProcessadas)
+      
+      // Se não tiver semana selecionada, seleciona a última do mês atual para o modal do ranking
+      if (!semanaSelecionadaModal || !semanasProcessadas.find(s => s.id === semanaSelecionadaModal)) {
+        if (semanasProcessadas.length > 0) {
+          setSemanaSelecionadaModal(semanasProcessadas[semanasProcessadas.length - 1].id)
+        }
+      }
+      setLoading(false)
     }
+
+    if (produtos.length > 0) {
+      carregarDados()
+    }
+  }, [filtroCategoria, produtos, mesSelecionado])
+
+  if (loading) {
+    return <div className="flex h-64 items-center justify-center"><div className="animate-spin w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full"></div></div>
   }
 
-  useEffect(() => { carregarDados() }, [filtroCategoria, produtos, mesSelecionado])
+  // Gera os anos e meses para o filtro
+  const anosMeses = []
+  const dataLoop = new Date()
+  for (let i = 0; i < 12; i++) {
+    anosMeses.push({
+      value: `${dataLoop.getFullYear()}-${String(dataLoop.getMonth() + 1).padStart(2, '0')}`,
+      label: dataLoop.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })
+    })
+    dataLoop.setMonth(dataLoop.getMonth() - 1)
+  }
 
-  const ultimaSemana = semanasData.length > 0 ? semanasData[semanasData.length - 1] : { comprasDetalhadas: [], consumoDetalhado: [] }
-  const semanaSel = semanasData.find(s => s.id === semanaSelecionadaModal) || { comprasDetalhadas: [], consumoDetalhado: [] }
+  const semanaSel = semanasData.find(s => s.id === semanaSelecionadaModal) || { consumoDetalhado: [] }
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-10 animate-in fade-in">
       
       {/* HEADER E FILTRO DE MÊS */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl border shadow-sm">
         <div>
-          <h2 className="text-2xl font-black text-slate-800">Relatórios Financeiros</h2>
-          <p className="text-sm text-slate-500 font-medium">Análise de fechamentos por período.</p>
+          <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><PackageOpen className="text-blue-600"/> Relatórios Financeiros</h2>
+          <p className="text-sm text-slate-500 font-medium mt-1">Análise de fechamentos e ranqueamento de consumo.</p>
         </div>
         
-        <div className="flex items-center gap-4">
-           {/* NOVO: SELETOR DE MÊS */}
-           <div className="flex items-center gap-2 bg-slate-50 border p-2 rounded-xl">
-             <Filter className="w-4 h-4 text-slate-400" />
-             <input 
-               type="month" 
+        <div className="flex flex-col md:flex-row items-center gap-4">
+           {/* SELETOR DE MÊS */}
+           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-xl shadow-sm">
+             <CalendarDays className="w-5 h-5 text-slate-400 ml-2" />
+             <select 
                value={mesSelecionado} 
                onChange={(e) => setMesSelecionado(e.target.value)}
-               className="bg-transparent font-bold text-slate-700 outline-none text-sm cursor-pointer"
-             />
+               className="bg-transparent font-bold text-slate-700 outline-none text-sm cursor-pointer pr-2 capitalize"
+             >
+               {anosMeses.map(am => <option key={am.value} value={am.value}>{am.label}</option>)}
+             </select>
            </div>
 
-           <div className="flex bg-slate-100 p-1 rounded-xl">
+           {/* FILTROS DE CATEGORIA (Que eu tinha engolido sem querer) */}
+           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
              {["Geral", "Cozinha", "Bebidas"].map(cat => (
-               <button key={cat} onClick={() => setFiltroCategoria(cat as any)} className={`px-4 py-2 rounded-lg font-bold text-sm ${filtroCategoria === cat ? "bg-white shadow-sm text-blue-600" : "text-slate-500"}`}>{cat}</button>
+               <button 
+                 key={cat} 
+                 onClick={() => setFiltroCategoria(cat as any)} 
+                 className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${filtroCategoria === cat ? "bg-white shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"}`}
+               >
+                 {cat}
+               </button>
              ))}
            </div>
         </div>
       </div>
 
       {/* TABELA LADO A LADO DO MÊS */}
-      <div className="bg-white rounded-3xl border overflow-hidden shadow-sm">
+      <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
         {semanasData.length === 0 ? (
-          <div className="p-10 text-center text-slate-400 font-bold">Nenhum fechamento encontrado neste mês.</div>
+          <div className="p-12 text-center text-slate-400 font-bold flex flex-col items-center">
+            <Search className="w-12 h-12 text-slate-200 mb-4" />
+            Nenhum fechamento encontrado neste mês.
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-right">
               <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                 <tr>
-                  <th className="p-4 text-left">Métricas ({mesSelecionado.split('-').reverse().join('/')})</th>
+                  <th className="p-5 text-left bg-slate-100">Métricas do Mês</th>
                   {semanasData.map(s => (
-                    <th key={s.id} className="p-4">
-                      <span className="block text-[11px] text-slate-700">{s.nome}</span>
-                      <span className="block text-[9px] text-slate-400 mt-0.5">{s.periodo}</span>
+                    <th key={s.id} className="p-5 min-w-[120px]">
+                      <span className="block text-[13px] text-slate-800">{s.nome}</span>
+                      <span className="block text-[10px] text-slate-400 mt-1">{s.periodo}</span>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                <tr className="hover:bg-slate-50"><td className="p-4 text-left font-bold text-slate-500">Faturamento</td>{semanasData.map(s => <td key={s.id} className="p-4 font-black text-emerald-600">{formatBRL(s.faturamento)}</td>)}</tr>
-                <tr className="hover:bg-slate-50"><td className="p-4 text-left font-bold text-slate-500">Compras</td>{semanasData.map(s => <td key={s.id} className="p-4 text-amber-600 font-bold">{formatBRL(s.compras)}</td>)}</tr>
-                <tr className="bg-blue-50/20 hover:bg-blue-50/30"><td className="p-4 text-left font-bold text-slate-700">CMV Real (R$)</td>{semanasData.map(s => <td key={s.id} className="p-4 font-black text-slate-800">{formatBRL(s.inicial + s.compras - s.final)}</td>)}</tr>
+                <tr className="hover:bg-slate-50">
+                  <td className="p-4 text-left font-bold text-slate-500 bg-slate-50/50">Faturamento Global</td>
+                  {semanasData.map(s => <td key={s.id} className="p-4 font-black text-emerald-600">{formatBRL(s.faturamento)}</td>)}
+                </tr>
+                <tr className="hover:bg-slate-50">
+                  <td className="p-4 text-left font-bold text-slate-500 bg-slate-50/50">Compras ({filtroCategoria})</td>
+                  {semanasData.map(s => <td key={s.id} className="p-4 text-amber-600 font-bold">{formatBRL(s.compras)}</td>)}
+                </tr>
+                <tr className="bg-blue-50/20 hover:bg-blue-50/40">
+                  <td className="p-4 text-left font-bold text-slate-700 bg-blue-50/30">Custo de CMV (R$)</td>
+                  {semanasData.map(s => <td key={s.id} className="p-4 font-black text-slate-800">{formatBRL(s.cmvValor)}</td>)}
+                </tr>
                 <tr>
-                  <td className="p-4 text-left font-bold text-slate-700">Margem (%)</td>
+                  <td className="p-5 text-left font-bold text-slate-700 bg-slate-50/50">Margem (%) do Faturamento</td>
                   {semanasData.map(s => {
-                    const cmvP = s.faturamento > 0 ? ((s.inicial + s.compras - s.final) / s.faturamento) * 100 : 0;
+                    const cmvP = s.faturamento > 0 ? (s.cmvValor / s.faturamento) * 100 : 0;
                     return (
-                      <td key={s.id} className="p-4">
-                        <span className={`px-2.5 py-1 rounded-md font-black text-xs ${cmvP > 35 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                      <td key={s.id} className="p-5">
+                        <span className={`px-3 py-1.5 rounded-lg font-black text-sm shadow-sm ${cmvP > 35 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
                           {formatPerc(cmvP)}
                         </span>
                       </td>
@@ -166,31 +252,64 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
         )}
       </div>
 
-      {/* CARDS DE CONSUMO */}
-      <div className="bg-white p-6 rounded-3xl border shadow-sm flex flex-col h-[500px]">
-        <div className="flex justify-between items-center mb-6 pb-4 border-b">
+      {/* RANKING DE CONSUMO COM A PROVA MATEMÁTICA */}
+      <div className="bg-white rounded-[32px] shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[600px]">
+        <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50">
           <div>
-            <h4 className="font-black text-slate-800 text-lg flex items-center gap-2"><TrendingDown className="text-red-500 w-5 h-5"/> Ranking de Consumo</h4>
-            <p className="text-xs font-medium text-slate-500 mt-1">Quais insumos pesaram mais no CMV da semana selecionada.</p>
+            <h4 className="font-black text-slate-800 text-lg flex items-center gap-2"><Flame className="text-red-500 w-5 h-5"/> Ranking de Consumo ({filtroCategoria})</h4>
+            <p className="text-xs font-medium text-slate-500 mt-1">Veja exatamente o que entrou, o que saiu e o que virou custo.</p>
           </div>
-          <select className="p-2.5 rounded-xl border border-slate-200 text-sm font-bold bg-slate-50 outline-none focus:border-blue-500 cursor-pointer" value={semanaSelecionadaModal} onChange={e => setSemanaSelecionadaModal(e.target.value)}>
+          <select className="p-3 rounded-xl border border-slate-200 text-sm font-bold bg-white shadow-sm outline-none focus:border-red-500 cursor-pointer" value={semanaSelecionadaModal} onChange={e => setSemanaSelecionadaModal(e.target.value)}>
             {semanasData.map(s => <option key={s.id} value={s.id}>{s.nome} ({s.periodo})</option>)}
           </select>
         </div>
         
-        <div className="flex-1 overflow-y-auto space-y-3 pr-2">
-          {semanaSel.consumoDetalhado.length === 0 && <p className="text-center text-slate-400 font-bold mt-10">Nenhum consumo registrado ou estoque final pendente.</p>}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {semanaSel.consumoDetalhado.length === 0 && <p className="text-center text-slate-400 font-bold mt-10">Nenhum consumo para a categoria {filtroCategoria} nessa semana.</p>}
+          
           {semanaSel.consumoDetalhado.map((item: any, i: number) => (
-            <div key={i} className="flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors rounded-2xl border border-slate-100">
-              <div>
-                <p className="font-bold text-sm text-slate-700">{item.item}</p>
-                <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">{item.qtdConsumida.toFixed(2)} {item.unidade} Consumidos</p>
+            <div key={i} className="flex flex-col p-5 bg-white hover:bg-slate-50 transition-colors rounded-2xl border border-slate-200 shadow-sm">
+              
+              {/* Cabeçalho do Item */}
+              <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-black flex items-center justify-center text-xs">{i + 1}º</div>
+                  <div>
+                    <p className="font-black text-slate-800 text-lg">{item.item}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{item.grupo}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo Total Usado</p>
+                  <p className="font-black text-red-600 text-xl">{formatBRL(item.valorConsumido)}</p>
+                </div>
               </div>
-              <p className="font-black text-red-600 text-lg">{formatBRL(item.valorConsumido)}</p>
+
+              {/* A PROVA MATEMÁTICA */}
+              <div className="grid grid-cols-4 gap-2 bg-slate-100/50 p-3 rounded-xl text-xs font-bold text-center border border-slate-100">
+                <div className="flex flex-col border-r border-slate-200/60">
+                  <span className="text-slate-400 text-[9px] uppercase">Tinha (Inicial)</span>
+                  <span className="text-slate-600">{item.qtdIni} <span className="text-[9px]">{item.unidade}</span></span>
+                </div>
+                <div className="flex flex-col border-r border-slate-200/60">
+                  <span className="text-amber-500/80 text-[9px] uppercase">+ Comprou</span>
+                  <span className="text-amber-600">{item.qtdComp} <span className="text-[9px]">{item.unidade}</span></span>
+                </div>
+                <div className="flex flex-col border-r border-slate-200/60">
+                  <span className="text-blue-400/80 text-[9px] uppercase">- Sobrou (Final)</span>
+                  <span className="text-blue-600">{item.qtdFin} <span className="text-[9px]">{item.unidade}</span></span>
+                </div>
+                <div className="flex flex-col justify-center">
+                  <span className="text-slate-400 text-[9px] uppercase">= Consumiu</span>
+                  <span className="text-slate-800 font-black">{item.qtdConsumida} <span className="text-[9px]">{item.unidade}</span></span>
+                </div>
+              </div>
+
             </div>
           ))}
         </div>
       </div>
+
     </div>
   )
 }
