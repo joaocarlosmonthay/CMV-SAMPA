@@ -31,8 +31,54 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
 
   const estInicialAtual = getValorEstoque(contagemInicial)
   const estFinalAtual = getValorEstoque(contagemFinal)
-  const cmvRealR$ = estInicialAtual + comprasAtual - estFinalAtual
+
+  // CMV Real - Ignorando a Caixinha de Produção Interna
+  let cmvRealR$ = 0;
+  if (produtos?.length > 0) {
+    produtos.forEach((p: any) => {
+      if (p.producao_interna) return; // SE FOR FABRICADO NA LOJA, IGNORA!
+      
+      const qI = contagemInicial[p.id]?.qtd ? parseFloat(contagemInicial[p.id].qtd) : 0;
+      const vI = contagemInicial[p.id]?.valor ? parseFloat(contagemInicial[p.id].valor) : 0;
+      const qF = contagemFinal[p.id]?.qtd ? parseFloat(contagemFinal[p.id].qtd) : 0;
+      const vF = contagemFinal[p.id]?.valor ? parseFloat(contagemFinal[p.id].valor) : 0;
+      
+      const compProd = (lancamentos?.compras || []).filter((c: any) => c.produto === p.nome);
+      const totalComp = compProd.reduce((acc: number, c: any) => acc + parseFloat(c.valorTotal), 0);
+      
+      cmvRealR$ += (qI * vI) + totalComp - (qF * vF);
+    });
+  }
+  
   const cmvRealPerc = faturamentoAtual > 0 ? (cmvRealR$ / faturamentoAtual) * 100 : 0
+
+  let cmvCozinhaRS = 0, cmvBebidasRS = 0
+  let percCozinha = 0, percBebidas = 0
+
+  if (produtos?.length > 0) {
+    const calcCmvPorGrupo = (isBebida: boolean) => {
+      let total = 0;
+      produtos.forEach((p: any) => {
+        if (p.producao_interna) return; // Ignora dupla contagem
+        const belongs = isBebida ? p.grupo === "Bebidas" : (p.grupo !== "Bebidas" && p.grupo !== "Embalagens" && p.grupo !== "Limpeza" && p.grupo !== "Outros");
+        if (!belongs) return;
+
+        const qI = contagemInicial[p.id]?.qtd ? parseFloat(contagemInicial[p.id].qtd) : 0;
+        const vI = contagemInicial[p.id]?.valor ? parseFloat(contagemInicial[p.id].valor) : 0;
+        const qF = contagemFinal[p.id]?.qtd ? parseFloat(contagemFinal[p.id].qtd) : 0;
+        const vF = contagemFinal[p.id]?.valor ? parseFloat(contagemFinal[p.id].valor) : 0;
+        const compProd = (lancamentos?.compras || []).filter((c: any) => c.produto === p.nome);
+        const totalComp = compProd.reduce((acc: number, c: any) => acc + parseFloat(c.valorTotal), 0);
+
+        total += (qI * vI) + totalComp - (qF * vF);
+      });
+      return total;
+    }
+    cmvCozinhaRS = calcCmvPorGrupo(false)
+    cmvBebidasRS = calcCmvPorGrupo(true)
+    percCozinha = faturamentoAtual > 0 ? (cmvCozinhaRS / faturamentoAtual) * 100 : 0
+    percBebidas = faturamentoAtual > 0 ? (cmvBebidasRS / faturamentoAtual) * 100 : 0
+  }
 
   useEffect(() => {
     const buscarHistorico = async () => {
@@ -40,15 +86,13 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
       const { data: financas } = await supabase.from('financas_semanais').select('*').order('data_inicio', { ascending: false }).limit(5)
       if (!financas || financas.length === 0) { setLoadingHistorico(false); return }
 
-      // CORREÇÃO: Pega o intervalo completo das 5 semanas para não perder nenhuma compra lançada no meio da semana
       const oldestDate = financas[financas.length - 1].data_inicio
       const newestDate = financas[0].data_fim || dataFim
-      
+
       const { data: dbCompras } = await supabase.from('compras').select('*').gte('data_compra', oldestDate).lte('data_compra', newestDate)
       const { data: dbEstoques } = await supabase.from('estoques').select('*').gte('data_contagem', oldestDate).lte('data_contagem', newestDate)
 
       const historyData = financas.reverse().map((f, index) => {
-        // Se for a semana que está aberta na tela, usa os dados ao vivo que estão sendo digitados
         if (f.data_inicio === dataInicio) {
           return {
             id: f.data_inicio,
@@ -63,14 +107,26 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
           }
         }
 
-        // CORREÇÃO: Filtra os dados do banco garantindo que estão dentro do intervalo início/fim da semana
         const myCompras = dbCompras?.filter(c => c.data_compra >= f.data_inicio && c.data_compra <= f.data_fim) || []
         const myEst = dbEstoques?.filter(e => e.data_contagem >= f.data_inicio && e.data_contagem <= f.data_fim) || []
         
         const totComp = myCompras.reduce((a, c) => a + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
         const eIni = myEst.filter(e => e.tipo_contagem === 'Inicial').reduce((a, e) => a + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
         const eFin = myEst.filter(e => e.tipo_contagem === 'Final').reduce((a, e) => a + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
-        const cmvRS = eIni + totComp - eFin
+        
+        let cmvRS = 0;
+        produtos?.forEach((p: any) => {
+          if (p.producao_interna) return; // Ignora o subproduto
+          const eI = myEst.find(e => e.produto_id === p.id && e.tipo_contagem === 'Inicial');
+          const eF = myEst.find(e => e.produto_id === p.id && e.tipo_contagem === 'Final');
+          const cP = myCompras.filter(c => c.produto_id === p.id);
+          const qI = eI ? parseFloat(eI.quantidade) : 0;
+          const vI = eI ? parseFloat(eI.valor_unitario) : 0;
+          const qF = eF ? parseFloat(eF.quantidade) : 0;
+          const vF = eF ? parseFloat(eF.valor_unitario) : vI;
+          const totalC = cP.reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0);
+          cmvRS += (qI * vI) + totalC - (qF * vF);
+        });
 
         const dFinal = new Date(f.data_inicio + "T12:00:00")
         dFinal.setDate(dFinal.getDate() + 6)
@@ -92,8 +148,8 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
       setLoadingHistorico(false)
     }
     
-    if (dataInicio) buscarHistorico()
-  }, [dataInicio, dataFim, lancamentos, contagemInicial, contagemFinal])
+    if (dataInicio && produtos.length > 0) buscarHistorico()
+  }, [dataInicio, dataFim, lancamentos, contagemInicial, contagemFinal, produtos])
 
   const chartData = historicoSemanas.map(s => ({
     name: s.semana,
@@ -130,13 +186,14 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
           <p className="text-[10px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1"><Package className="w-3 h-3 text-blue-500"/> (-) Estoque Final</p>
           <p className="text-2xl font-black text-slate-700">{formatBRL(estFinalAtual)}</p>
         </div>
-        <div className="bg-blue-600 p-5 rounded-3xl shadow-blue-200 shadow-lg text-white">
+        <div className="bg-blue-600 p-5 rounded-3xl shadow-blue-200 shadow-lg text-white relative">
           <p className="text-[10px] font-black text-blue-100 uppercase mb-1">(=) CMV Realizado</p>
           <p className="text-2xl font-black">{formatBRL(cmvRealR$)}</p>
+          <span className="absolute bottom-2 right-4 text-[8px] text-blue-200 font-bold">*Exclui Subprodutos Fabricados</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-5"><DollarSign className="w-24 h-24"/></div>
@@ -157,6 +214,32 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
           </div>
           <div className="mt-4 h-2 w-full bg-slate-100 rounded-full overflow-hidden">
             <div className={`h-full transition-all duration-1000 ${cmvRealPerc > 35 ? 'bg-red-500' : 'bg-blue-500'}`} style={{width: `${Math.min(cmvRealPerc, 100)}%`}}></div>
+          </div>
+        </div>
+
+        <div className="bg-slate-900 p-8 rounded-[32px] shadow-xl text-white">
+          <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-6">Divisão de Custo</p>
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-orange-500/20 rounded-xl"><Pizza className="text-orange-400 w-5 h-5"/></div>
+                <span className="font-bold text-slate-300">Cozinha</span>
+              </div>
+              <div className="text-right">
+                <p className="font-black text-lg">{formatPerc(percCozinha)}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">{formatBRL(cmvCozinhaRS)}</p>
+              </div>
+            </div>
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-purple-500/20 rounded-xl"><Coffee className="text-purple-400 w-5 h-5"/></div>
+                <span className="font-bold text-slate-300">Bebidas</span>
+              </div>
+              <div className="text-right">
+                <p className="font-black text-lg">{formatPerc(percBebidas)}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">{formatBRL(cmvBebidasRS)}</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -197,7 +280,10 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
                 {historicoSemanas.map(s => <td key={s.id} className="py-4 px-6 text-right text-slate-400">{formatBRL(s.estoqueFinal)}</td>)}
               </tr>
               <tr className="bg-blue-50/30">
-                <td className="py-4 px-6 font-bold text-slate-700">CMV Realizado (R$)</td>
+                <td className="py-4 px-6 font-bold text-slate-700 flex flex-col">
+                  CMV Realizado (R$)
+                  <span className="text-[9px] font-black text-blue-500">*Sem Subprodutos</span>
+                </td>
                 {historicoSemanas.map(s => <td key={s.id} className="py-4 px-6 text-right font-black text-slate-800">{formatBRL(s.cmvValor)}</td>)}
               </tr>
               <tr className="bg-slate-50">

@@ -1,14 +1,14 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { PlusCircle, CheckCircle2, Package, Pencil, Trash2, X, Tags, Upload } from "lucide-react"
+import { PlusCircle, CheckCircle2, Package, Pencil, Trash2, X, Tags, Upload, Beaker } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { toast } from "react-hot-toast"
 
 const UNIDADES = ["Kg", "Litro", "Unidade", "Pacote", "CX", "PCT"]
 
 export type Produto = {
-  id: number; nome: string; grupo: string; unidade: string
+  id: number; nome: string; grupo: string; unidade: string; producao_interna: boolean;
 }
 
 interface CadastrosProps {
@@ -20,9 +20,12 @@ interface CadastrosProps {
 export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
   const [aba, setAba] = useState<"produtos" | "categorias">("produtos")
   const [gruposDB, setGruposDB] = useState<{id: number, nome: string}[]>([])
+  
   const [nome, setNome] = useState("")
   const [grupoId, setGrupoId] = useState("")
   const [unidade, setUnidade] = useState("")
+  const [producaoInterna, setProducaoInterna] = useState(false)
+  
   const [editandoId, setEditandoId] = useState<number | null>(null)
   const [salvando, setSalvando] = useState(false)
   const [novaCategoria, setNovaCategoria] = useState("")
@@ -35,18 +38,26 @@ export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
     if (data) setGruposDB(data)
   }
 
+  const resetForm = () => {
+    setNome(""); setGrupoId(""); setUnidade(""); setProducaoInterna(false); setEditandoId(null); setSalvando(false);
+  }
+
   const handleSalvarProduto = async () => {
     if (isReadOnly) return toast.error("Período bloqueado!")
     if (!nome.trim() || !grupoId || !unidade) return toast.error("Preencha os campos!")
+    
     setSalvando(true)
+    const payload = { nome: nome.trim(), unidade_medida: unidade, grupo_id: parseInt(grupoId), producao_interna: producaoInterna }
+
     if (editandoId) {
-      await supabase.from('produtos').update({ nome: nome.trim(), unidade_medida: unidade, grupo_id: parseInt(grupoId) }).eq('id', editandoId)
+      await supabase.from('produtos').update(payload).eq('id', editandoId)
       toast.success("Atualizado!")
     } else {
-      await supabase.from('produtos').insert([{ nome: nome.trim(), unidade_medida: unidade, grupo_id: parseInt(grupoId) }])
+      await supabase.from('produtos').insert([payload])
       toast.success("Salvo!")
     }
-    setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null); setSalvando(false)
+    
+    resetForm()
     onRefresh()
   }
 
@@ -78,6 +89,7 @@ export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
     }
   }
 
+  // Importar CSV
   const handleImportarCSVProdutos = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (isReadOnly) return toast.error("Período bloqueado!")
     const file = e.target.files?.[0]
@@ -183,7 +195,7 @@ export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
                     </label>
                   </div>
                 )}
-                {editandoId && <button onClick={() => {setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null)}} className="text-muted-foreground hover:text-red-500"><X /></button>}
+                {editandoId && <button onClick={resetForm} className="text-muted-foreground hover:text-red-500"><X /></button>}
               </div>
             </div>
 
@@ -191,9 +203,10 @@ export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
               <label className="font-semibold block">Nome do Produto</label>
               <input type="text" disabled={isReadOnly} value={nome} onChange={(e) => setNome(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50" />
             </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               <div className="space-y-2">
-                <label className="font-semibold block">Categoria</label>
+                <label className="font-semibold block">Categoria Principal</label>
                 <select disabled={isReadOnly} value={grupoId} onChange={(e) => setGrupoId(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50">
                   <option value="">Selecione...</option>
                   {gruposDB.map((g) => <option key={g.id} value={g.id}>{g.nome}</option>)}
@@ -207,6 +220,24 @@ export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
                 </select>
               </div>
             </div>
+
+            {/* A NOVA CAIXINHA DE MÁGICA */}
+            <div className="mt-4">
+              <label className="flex items-center gap-3 p-4 border-2 rounded-xl bg-background cursor-pointer hover:bg-slate-50 transition-colors">
+                <input 
+                  type="checkbox" 
+                  disabled={isReadOnly} 
+                  checked={producaoInterna} 
+                  onChange={(e) => setProducaoInterna(e.target.checked)} 
+                  className="w-5 h-5 accent-[#C0392B] cursor-pointer" 
+                />
+                <div>
+                  <p className="font-bold text-slate-800 flex items-center gap-2">Produto Fabricado na Loja (Subproduto) <Beaker className="w-4 h-4 text-blue-500"/></p>
+                  <p className="text-xs text-slate-500 font-medium">O sistema vai manter a contagem de estoque, mas ignorar o custo no CMV para evitar bitributação.</p>
+                </div>
+              </label>
+            </div>
+
             <button onClick={handleSalvarProduto} disabled={!nome.trim() || !grupoId || !unidade || salvando || isReadOnly} className="w-full py-4 rounded-xl bg-[#C0392B] text-white font-bold disabled:opacity-50 flex justify-center gap-2">
               {salvando ? "A Guardar..." : editandoId ? <><CheckCircle2 /> Atualizar</> : <><PlusCircle /> Salvar</>}
             </button>
@@ -222,9 +253,15 @@ export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
                   <ul className="divide-y">
                     {lista.map((p) => (
                       <li key={p.id} className="flex items-center justify-between px-6 py-4">
-                        <div><span className="font-semibold block">{p.nome}</span><span className="text-xs text-muted-foreground uppercase">{p.unidade}</span></div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold block">{p.nome}</span>
+                            {p.producao_interna && <span className="bg-blue-100 text-blue-600 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Fabricado</span>}
+                          </div>
+                          <span className="text-xs text-muted-foreground uppercase">{p.unidade}</span>
+                        </div>
                         <div className="flex gap-2">
-                          <button disabled={isReadOnly} onClick={() => {setNome(p.nome); setGrupoId(String(g.id)); setUnidade(p.unidade); setEditandoId(p.id); window.scrollTo(0,0)}} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-30"><Pencil size={20}/></button>
+                          <button disabled={isReadOnly} onClick={() => {setNome(p.nome); setGrupoId(String(g.id)); setUnidade(p.unidade); setProducaoInterna(p.producao_interna); setEditandoId(p.id); window.scrollTo(0,0)}} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-30"><Pencil size={20}/></button>
                           <button disabled={isReadOnly} onClick={() => handleDeletarProduto(p.id, p.nome)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-30"><Trash2 size={20}/></button>
                         </div>
                       </li>

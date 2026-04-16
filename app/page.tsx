@@ -62,12 +62,10 @@ function CMVApp() {
 
   useEffect(() => {
     const initApp = async () => {
-      // Busca a última semana no banco para saber o status Global
       const { data } = await supabase.from('financas_semanais').select('*').order('data_inicio', { ascending: false }).limit(1)
 
       if (data && data.length > 0) {
         const ultima = data[0]
-        
         if (ultima.status === 'Aberta') {
           setSemanaOficial(ultima.data_inicio)
           setDataInicio(ultima.data_inicio)
@@ -90,7 +88,6 @@ function CMVApp() {
         setDataFim(calcularDataFim(proxima))
         setSemanaAberta(false)
       }
-      
       carregarProdutos()
     }
     initApp()
@@ -102,7 +99,7 @@ function CMVApp() {
     }
   }, [dataInicio, dataFim, semanaAberta])
 
-  // Busca adaptada para Vilhena (tabela 'grupos')
+  // --- BUSCA OS PRODUTOS AGORA TRAZENDO A "CAIXINHA" DE PRODUÇÃO INTERNA ---
   const carregarProdutos = async () => {
     const { data, error } = await supabase.from('produtos').select('*, grupos(nome)').order('nome')
     if (data) {
@@ -111,7 +108,8 @@ function CMVApp() {
         nome: p.nome,
         unidade: p.unidade_medida, 
         grupo: p.grupos?.nome || 'Sem Grupo',
-        grupo_id: p.grupo_id
+        grupo_id: p.grupo_id,
+        producao_interna: p.producao_interna || false // Puxando o sinalizador!
       })))
     }
   }

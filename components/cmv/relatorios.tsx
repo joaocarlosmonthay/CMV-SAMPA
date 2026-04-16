@@ -19,7 +19,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
   const [semanaSelecionadaModal, setSemanaSelecionadaModal] = useState<string>("")
   const [loading, setLoading] = useState(true)
   
-  // FILTRO DE MÊS: Por padrão pega o mês atual
   const [mesSelecionado, setMesSelecionado] = useState(() => {
     const hoje = new Date()
     return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`
@@ -29,7 +28,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
     const carregarDados = async () => {
       setLoading(true)
 
-      // 1. Busca TODAS as semanas já lançadas na história da pizzaria (Ordem Crescente)
       const { data: todasFinancas } = await supabase.from('financas_semanais').select('*').order('data_inicio', { ascending: true })
 
       if (!todasFinancas || todasFinancas.length === 0) {
@@ -38,13 +36,7 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
         return
       }
 
-      // 2. Numera absolutamente (Semana 1, Semana 2 ... Semana 26 ...)
-      const financasNumeradas = todasFinancas.map((f, i) => ({
-        ...f,
-        numeroAbsoluto: i + 1
-      }))
-
-      // 3. Filtra apenas as semanas que caem no mês selecionado pelo usuário
+      const financasNumeradas = todasFinancas.map((f, i) => ({ ...f, numeroAbsoluto: i + 1 }))
       const financasDoMes = financasNumeradas.filter(f => f.data_inicio.startsWith(mesSelecionado))
 
       if (financasDoMes.length === 0) {
@@ -53,19 +45,16 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
         return
       }
 
-      // 4. Pega os dados do BD de uma vez só para essas semanas
       const oldestDate = financasDoMes[0].data_inicio
       const newestDate = financasDoMes[financasDoMes.length - 1].data_fim || financasDoMes[financasDoMes.length - 1].data_inicio
 
       const { data: dbCompras } = await supabase.from('compras').select('*').gte('data_compra', oldestDate).lte('data_compra', newestDate)
       const { data: dbEstoques } = await supabase.from('estoques').select('*').gte('data_contagem', oldestDate).lte('data_contagem', newestDate)
 
-      // 5. Processa cada semana do mês para a Tabela e o Ranking
       const semanasProcessadas = financasDoMes.map(f => {
         let comp = dbCompras?.filter(c => c.data_compra >= f.data_inicio && c.data_compra <= f.data_fim) || []
         let est = dbEstoques?.filter(e => e.data_contagem >= f.data_inicio && e.data_contagem <= f.data_fim) || []
 
-        // Aplica o filtro de Categoria (Cozinha x Bebidas)
         let prodsFiltrados = produtos || []
         if (filtroCategoria === "Cozinha") {
           prodsFiltrados = produtos.filter(p => p.grupo !== "Bebidas" && p.grupo !== "Embalagens" && p.grupo !== "Limpeza" && p.grupo !== "Outros")
@@ -73,14 +62,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           prodsFiltrados = produtos.filter(p => p.grupo === "Bebidas")
         }
 
-        comp = comp.filter(c => prodsFiltrados.find(p => p.id === c.produto_id))
-        est = est.filter(e => prodsFiltrados.find(p => p.id === e.produto_id))
-
-        const totalCompras = comp.reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
-        const inicial = est.filter(e => e.tipo_contagem === 'Inicial').reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
-        const final = est.filter(e => e.tipo_contagem === 'Final').reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
-
-        // Lógica do Ranking Detalhado (Tinha + Comprou - Sobrou)
         const consumoDetalhado = prodsFiltrados.map(p => {
           const eI = est.find(e => e.produto_id === p.id && e.tipo_contagem === 'Inicial')
           const eF = est.find(e => e.produto_id === p.id && e.tipo_contagem === 'Final')
@@ -98,17 +79,29 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           const qtdFin = eF ? parseFloat(eF.quantidade) : 0
           const valFin = eF ? parseFloat(eF.valor_unitario) : valIni
           
-          const custoConsumido = (qtdIni * valIni) + custoComp - (qtdFin * valFin)
+          let custoConsumido = (qtdIni * valIni) + custoComp - (qtdFin * valFin)
           const qtdConsumida = qtdIni + qtdComp - qtdFin
+
+          // A REGRA DO DAVI: Se a caixinha "Produção Interna" estiver marcada, zera o custo financeiro
+          if (p.producao_interna) {
+             custoConsumido = 0;
+          }
 
           return { 
             item: p.nome, 
             unidade: p.unidade, 
             grupo: p.grupo,
+            producao_interna: p.producao_interna,
             qtdIni, qtdComp, qtdFin, qtdConsumida,
             valorConsumido: custoConsumido > 0 ? custoConsumido : 0 
           }
-        }).filter(i => i.valorConsumido > 0).sort((a, b) => b.valorConsumido - a.valorConsumido)
+        }).filter(i => i.valorConsumido > 0 || i.qtdConsumida > 0).sort((a, b) => b.valorConsumido - a.valorConsumido)
+
+        const cmvValorReal = consumoDetalhado.reduce((acc, curr) => acc + curr.valorConsumido, 0)
+
+        const inicialVisual = est.filter(e => e.tipo_contagem === 'Inicial' && prodsFiltrados.find(p => p.id === e.produto_id)).reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
+        const finalVisual = est.filter(e => e.tipo_contagem === 'Final' && prodsFiltrados.find(p => p.id === e.produto_id)).reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
+        const comprasVisuais = comp.filter(c => prodsFiltrados.find(p => p.id === c.produto_id)).reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
 
         const dFinal = new Date(f.data_inicio + "T12:00:00")
         dFinal.setDate(dFinal.getDate() + 6)
@@ -117,20 +110,19 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
 
         return { 
           id: f.data_inicio, 
-          nome: `Semana ${f.numeroAbsoluto}`, // AGORA FICA CERTO: "Semana 26"
+          nome: `Semana ${f.numeroAbsoluto}`,
           periodo: dataVisual, 
           faturamento: f.faturamento, 
-          inicial, 
-          compras: totalCompras, 
-          final, 
-          cmvValor: inicial + totalCompras - final,
+          inicial: inicialVisual, 
+          compras: comprasVisuais, 
+          final: finalVisual, 
+          cmvValor: cmvValorReal,
           consumoDetalhado 
         }
       })
 
       setSemanasData(semanasProcessadas)
       
-      // Se não tiver semana selecionada, seleciona a última do mês atual para o modal do ranking
       if (!semanaSelecionadaModal || !semanasProcessadas.find(s => s.id === semanaSelecionadaModal)) {
         if (semanasProcessadas.length > 0) {
           setSemanaSelecionadaModal(semanasProcessadas[semanasProcessadas.length - 1].id)
@@ -148,7 +140,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
     return <div className="flex h-64 items-center justify-center"><div className="animate-spin w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full"></div></div>
   }
 
-  // Gera os anos e meses para o filtro
   const anosMeses = []
   const dataLoop = new Date()
   for (let i = 0; i < 12; i++) {
@@ -164,7 +155,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
   return (
     <div className="space-y-8 pb-10 animate-in fade-in">
       
-      {/* HEADER E FILTRO DE MÊS */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl border shadow-sm">
         <div>
           <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><PackageOpen className="text-blue-600"/> Relatórios Financeiros</h2>
@@ -172,7 +162,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
         </div>
         
         <div className="flex flex-col md:flex-row items-center gap-4">
-           {/* SELETOR DE MÊS */}
            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-xl shadow-sm">
              <CalendarDays className="w-5 h-5 text-slate-400 ml-2" />
              <select 
@@ -184,7 +173,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
              </select>
            </div>
 
-           {/* FILTROS DE CATEGORIA (Que eu tinha engolido sem querer) */}
            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
              {["Geral", "Cozinha", "Bebidas"].map(cat => (
                <button 
@@ -199,7 +187,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
         </div>
       </div>
 
-      {/* TABELA LADO A LADO DO MÊS */}
       <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
         {semanasData.length === 0 ? (
           <div className="p-12 text-center text-slate-400 font-bold flex flex-col items-center">
@@ -230,7 +217,10 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                   {semanasData.map(s => <td key={s.id} className="p-4 text-amber-600 font-bold">{formatBRL(s.compras)}</td>)}
                 </tr>
                 <tr className="bg-blue-50/20 hover:bg-blue-50/40">
-                  <td className="p-4 text-left font-bold text-slate-700 bg-blue-50/30">Custo de CMV (R$)</td>
+                  <td className="p-4 text-left font-bold text-slate-700 bg-blue-50/30 flex flex-col">
+                     Custo de CMV (R$)
+                     <span className="text-[9px] font-black text-blue-500">*Ignora Subprodutos</span>
+                  </td>
                   {semanasData.map(s => <td key={s.id} className="p-4 font-black text-slate-800">{formatBRL(s.cmvValor)}</td>)}
                 </tr>
                 <tr>
@@ -252,12 +242,11 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
         )}
       </div>
 
-      {/* RANKING DE CONSUMO COM A PROVA MATEMÁTICA */}
       <div className="bg-white rounded-[32px] shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[600px]">
         <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50">
           <div>
             <h4 className="font-black text-slate-800 text-lg flex items-center gap-2"><Flame className="text-red-500 w-5 h-5"/> Ranking de Consumo ({filtroCategoria})</h4>
-            <p className="text-xs font-medium text-slate-500 mt-1">Veja exatamente o que entrou, o que saiu e o que virou custo.</p>
+            <p className="text-xs font-medium text-slate-500 mt-1">Veja o que entrou, saiu e o custo exato (Fabricados não geram custo duplo).</p>
           </div>
           <select className="p-3 rounded-xl border border-slate-200 text-sm font-bold bg-white shadow-sm outline-none focus:border-red-500 cursor-pointer" value={semanaSelecionadaModal} onChange={e => setSemanaSelecionadaModal(e.target.value)}>
             {semanasData.map(s => <option key={s.id} value={s.id}>{s.nome} ({s.periodo})</option>)}
@@ -268,12 +257,11 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           {semanaSel.consumoDetalhado.length === 0 && <p className="text-center text-slate-400 font-bold mt-10">Nenhum consumo para a categoria {filtroCategoria} nessa semana.</p>}
           
           {semanaSel.consumoDetalhado.map((item: any, i: number) => (
-            <div key={i} className="flex flex-col p-5 bg-white hover:bg-slate-50 transition-colors rounded-2xl border border-slate-200 shadow-sm">
+            <div key={i} className={`flex flex-col p-5 bg-white hover:bg-slate-50 transition-colors rounded-2xl border shadow-sm ${item.producao_interna ? 'border-blue-200 bg-blue-50/20' : 'border-slate-200'}`}>
               
-              {/* Cabeçalho do Item */}
               <div className="flex justify-between items-center mb-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-black flex items-center justify-center text-xs">{i + 1}º</div>
+                  <div className={`w-8 h-8 rounded-full font-black flex items-center justify-center text-xs ${item.producao_interna ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>{i + 1}º</div>
                   <div>
                     <p className="font-black text-slate-800 text-lg">{item.item}</p>
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{item.grupo}</p>
@@ -281,11 +269,14 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo Total Usado</p>
-                  <p className="font-black text-red-600 text-xl">{formatBRL(item.valorConsumido)}</p>
+                  {item.producao_interna ? (
+                     <p className="font-black text-blue-500 text-sm bg-blue-50 px-2 py-1 rounded-md border border-blue-100">R$ 0,00 (Subproduto)</p>
+                  ) : (
+                     <p className="font-black text-red-600 text-xl">{formatBRL(item.valorConsumido)}</p>
+                  )}
                 </div>
               </div>
 
-              {/* A PROVA MATEMÁTICA */}
               <div className="grid grid-cols-4 gap-2 bg-slate-100/50 p-3 rounded-xl text-xs font-bold text-center border border-slate-100">
                 <div className="flex flex-col border-r border-slate-200/60">
                   <span className="text-slate-400 text-[9px] uppercase">Tinha (Inicial)</span>
