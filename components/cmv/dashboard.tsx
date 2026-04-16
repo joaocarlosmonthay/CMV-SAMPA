@@ -40,11 +40,15 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
       const { data: financas } = await supabase.from('financas_semanais').select('*').order('data_inicio', { ascending: false }).limit(5)
       if (!financas || financas.length === 0) { setLoadingHistorico(false); return }
 
-      const datas = financas.map(f => f.data_inicio)
-      const { data: dbCompras } = await supabase.from('compras').select('*').in('data_compra', datas)
-      const { data: dbEstoques } = await supabase.from('estoques').select('*').in('data_contagem', datas)
+      // CORREÇÃO: Pega o intervalo completo das 5 semanas para não perder nenhuma compra lançada no meio da semana
+      const oldestDate = financas[financas.length - 1].data_inicio
+      const newestDate = financas[0].data_fim || dataFim
+      
+      const { data: dbCompras } = await supabase.from('compras').select('*').gte('data_compra', oldestDate).lte('data_compra', newestDate)
+      const { data: dbEstoques } = await supabase.from('estoques').select('*').gte('data_contagem', oldestDate).lte('data_contagem', newestDate)
 
       const historyData = financas.reverse().map((f, index) => {
+        // Se for a semana que está aberta na tela, usa os dados ao vivo que estão sendo digitados
         if (f.data_inicio === dataInicio) {
           return {
             id: f.data_inicio,
@@ -59,8 +63,9 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
           }
         }
 
-        const myCompras = dbCompras?.filter(c => c.data_compra === f.data_inicio) || []
-        const myEst = dbEstoques?.filter(e => e.data_contagem === f.data_inicio) || []
+        // CORREÇÃO: Filtra os dados do banco garantindo que estão dentro do intervalo início/fim da semana
+        const myCompras = dbCompras?.filter(c => c.data_compra >= f.data_inicio && c.data_compra <= f.data_fim) || []
+        const myEst = dbEstoques?.filter(e => e.data_contagem >= f.data_inicio && e.data_contagem <= f.data_fim) || []
         
         const totComp = myCompras.reduce((a, c) => a + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
         const eIni = myEst.filter(e => e.tipo_contagem === 'Inicial').reduce((a, e) => a + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
