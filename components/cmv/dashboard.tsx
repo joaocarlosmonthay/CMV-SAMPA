@@ -19,7 +19,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
   const [historicoSemanas, setHistoricoSemanas] = useState<any[]>([])
   const [modalAberto, setModalAberto] = useState<"compras" | "consumo" | null>(null)
 
-  // --- CÁLCULOS DA SEMANA ATUAL ---
   const faturamentoAtual = lancamentos?.faturamento || 0
   const comprasAtual = (lancamentos?.compras || []).reduce((acc: number, c: any) => acc + parseFloat(c.valorTotal || 0), 0)
 
@@ -35,27 +34,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
   const cmvRealR$ = estInicialAtual + comprasAtual - estFinalAtual
   const cmvRealPerc = faturamentoAtual > 0 ? (cmvRealR$ / faturamentoAtual) * 100 : 0
 
-  let cmvCozinhaRS = 0, cmvBebidasRS = 0
-  let percCozinha = 0, percBebidas = 0
-
-  if (produtos?.length > 0) {
-    const calcCmvPorGrupo = (isBebida: boolean) => {
-      const ids = produtos.filter((p: any) => isBebida ? p.grupo === "Bebidas" : (p.grupo !== "Bebidas" && p.grupo !== "Embalagens" && p.grupo !== "Limpeza")).map((p: any) => p.id)
-      const init = Object.entries(contagemInicial || {}).reduce((acc, [id, item]: any) => ids.includes(Number(id)) ? acc + (parseFloat(item.qtd||0) * parseFloat(item.valor||0)) : acc, 0)
-      const fin = Object.entries(contagemFinal || {}).reduce((acc, [id, item]: any) => ids.includes(Number(id)) ? acc + (parseFloat(item.qtd||0) * parseFloat(item.valor||0)) : acc, 0)
-      const comp = (lancamentos?.compras || []).reduce((acc: number, c: any) => {
-        const prod = produtos.find((p:any) => p.nome === c.produto)
-        return prod && ids.includes(prod.id) ? acc + parseFloat(c.valorTotal) : acc
-      }, 0)
-      return init + comp - fin
-    }
-    cmvCozinhaRS = calcCmvPorGrupo(false)
-    cmvBebidasRS = calcCmvPorGrupo(true)
-    percCozinha = faturamentoAtual > 0 ? (cmvCozinhaRS / faturamentoAtual) * 100 : 0
-    percBebidas = faturamentoAtual > 0 ? (cmvBebidasRS / faturamentoAtual) * 100 : 0
-  }
-
-  // --- BUSCA DO HISTÓRICO (CORRIGIDO E SINCRONIZADO) ---
   useEffect(() => {
     const buscarHistorico = async () => {
       setLoadingHistorico(true)
@@ -67,7 +45,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
       const { data: dbEstoques } = await supabase.from('estoques').select('*').in('data_contagem', datas)
 
       const historyData = financas.reverse().map((f, index) => {
-        // Se a data do loop for igual à data que o usuário está vendo na tela, USAMOS OS DADOS VIVOS DA TELA
         if (f.data_inicio === dataInicio) {
           return {
             id: f.data_inicio,
@@ -82,7 +59,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
           }
         }
 
-        // Se for de semanas anteriores, usamos o banco de dados puro, mas multiplicando Qtd * Unitário
         const myCompras = dbCompras?.filter(c => c.data_compra === f.data_inicio) || []
         const myEst = dbEstoques?.filter(e => e.data_contagem === f.data_inicio) || []
         
@@ -111,7 +87,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
       setLoadingHistorico(false)
     }
     
-    // O useEffect agora reage a TUDO: data, lançamentos e estoques
     if (dataInicio) buscarHistorico()
   }, [dataInicio, dataFim, lancamentos, contagemInicial, contagemFinal])
 
@@ -124,7 +99,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
   return (
     <div className="space-y-6 font-sans pb-10">
       
-      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-[24px] shadow-sm border border-slate-200">
         <div>
           <h2 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
@@ -138,7 +112,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
         </div>
       </div>
 
-      {/* FLUXO DO ESTOQUE */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
           <p className="text-[10px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1"><Warehouse className="w-3 h-3"/> Estoque Inicial</p>
@@ -158,8 +131,7 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
         </div>
       </div>
 
-      {/* INDICADORES PRINCIPAIS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-5"><DollarSign className="w-24 h-24"/></div>
@@ -182,35 +154,8 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
             <div className={`h-full transition-all duration-1000 ${cmvRealPerc > 35 ? 'bg-red-500' : 'bg-blue-500'}`} style={{width: `${Math.min(cmvRealPerc, 100)}%`}}></div>
           </div>
         </div>
-
-        <div className="bg-slate-900 p-8 rounded-[32px] shadow-xl text-white">
-          <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-6">Divisão de Custo</p>
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-orange-500/20 rounded-xl"><Pizza className="text-orange-400 w-5 h-5"/></div>
-                <span className="font-bold text-slate-300">Cozinha</span>
-              </div>
-              <div className="text-right">
-                <p className="font-black text-lg">{formatPerc(percCozinha)}</p>
-                <p className="text-[10px] text-slate-500 font-bold uppercase">{formatBRL(cmvCozinhaRS)}</p>
-              </div>
-            </div>
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-purple-500/20 rounded-xl"><Coffee className="text-purple-400 w-5 h-5"/></div>
-                <span className="font-bold text-slate-300">Bebidas</span>
-              </div>
-              <div className="text-right">
-                <p className="font-black text-lg">{formatPerc(percBebidas)}</p>
-                <p className="text-[10px] text-slate-500 font-bold uppercase">{formatBRL(cmvBebidasRS)}</p>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
-      {/* EVOLUÇÃO SEMANAL */}
       <div className="bg-white rounded-[32px] shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
           <h3 className="font-black text-lg text-slate-800 flex items-center gap-2"><History className="w-5 h-5 text-blue-600"/> Evolução das Últimas 5 Semanas</h3>
@@ -265,7 +210,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
         </div>
       </div>
 
-      {/* GRÁFICO E RANKING */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col h-[400px]">
           <div className="flex justify-between items-center mb-6">
@@ -303,7 +247,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
         </div>
       </div>
 
-      {/* MODAL AUDITORIA */}
       {modalAberto === "compras" && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">

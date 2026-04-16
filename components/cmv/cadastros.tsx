@@ -3,18 +3,21 @@
 import { useState, useEffect } from "react"
 import { PlusCircle, CheckCircle2, Package, Pencil, Trash2, X, Tags, Upload } from "lucide-react"
 import { supabase } from "@/lib/supabase"
+import { toast } from "react-hot-toast"
 
-const UNIDADES = ["Kg", "Litro", "Unidade", "Pacote"]
+const UNIDADES = ["Kg", "Litro", "Unidade", "Pacote", "CX", "PCT"]
 
 export type Produto = {
   id: number; nome: string; grupo: string; unidade: string
 }
 
 interface CadastrosProps {
-  produtos: Produto[]; onAddProduto: (p: Produto) => void
+  produtos: Produto[]; 
+  onRefresh: () => void;
+  isReadOnly: boolean;
 }
 
-export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
+export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
   const [aba, setAba] = useState<"produtos" | "categorias">("produtos")
   const [gruposDB, setGruposDB] = useState<{id: number, nome: string}[]>([])
   const [nome, setNome] = useState("")
@@ -23,7 +26,7 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
   const [editandoId, setEditandoId] = useState<number | null>(null)
   const [salvando, setSalvando] = useState(false)
   const [novaCategoria, setNovaCategoria] = useState("")
-  const [importando, setImportando] = useState(false) // NOVO ESTADO
+  const [importando, setImportando] = useState(false)
 
   useEffect(() => { carregarCategorias() }, [])
 
@@ -33,44 +36,50 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
   }
 
   const handleSalvarProduto = async () => {
-    if (!nome.trim() || !grupoId || !unidade) return
+    if (isReadOnly) return toast.error("Período bloqueado!")
+    if (!nome.trim() || !grupoId || !unidade) return toast.error("Preencha os campos!")
     setSalvando(true)
     if (editandoId) {
       await supabase.from('produtos').update({ nome: nome.trim(), unidade_medida: unidade, grupo_id: parseInt(grupoId) }).eq('id', editandoId)
+      toast.success("Atualizado!")
     } else {
-      const gNome = gruposDB.find(g => g.id === parseInt(grupoId))?.nome || "Outros"
-      onAddProduto({ id: 0, nome: nome.trim(), grupo: gNome, unidade })
+      await supabase.from('produtos').insert([{ nome: nome.trim(), unidade_medida: unidade, grupo_id: parseInt(grupoId) }])
+      toast.success("Salvo!")
     }
     setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null); setSalvando(false)
-    if (editandoId) window.location.reload()
+    onRefresh()
   }
 
   const handleDeletarProduto = async (id: number, nomeProd: string) => {
+    if (isReadOnly) return toast.error("Período bloqueado!")
     if (window.confirm(`Apagar o produto ${nomeProd} definitivamente?`)) {
       await supabase.from('produtos').delete().eq('id', id)
-      window.location.reload()
+      toast.success("Deletado!")
+      onRefresh()
     }
   }
 
   const handleSalvarCategoria = async () => {
+    if (isReadOnly) return toast.error("Período bloqueado!")
     if (!novaCategoria.trim()) return
     await supabase.from('grupos').insert([{ nome: novaCategoria.trim() }])
     setNovaCategoria("")
+    toast.success("Categoria salva!")
     carregarCategorias()
   }
 
   const handleDeletarCategoria = async (id: number, nomeCat: string) => {
+    if (isReadOnly) return toast.error("Período bloqueado!")
     if (window.confirm(`ATENÇÃO: Apagar a categoria ${nomeCat} vai afetar os produtos dentro dela. Continuar?`)) {
       await supabase.from('grupos').delete().eq('id', id)
+      toast.success("Categoria deletada!")
       carregarCategorias()
-      window.location.reload()
+      onRefresh()
     }
   }
 
-  // ============================================================================
-  // NOVO: IMPORTADOR DE CSV PARA PRODUTOS (MANTENDO OS IDs ORIGINAIS!)
-  // ============================================================================
   const handleImportarCSVProdutos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isReadOnly) return toast.error("Período bloqueado!")
     const file = e.target.files?.[0]
     if (!file) return
 
@@ -105,7 +114,6 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
           if (nomeProd) {
             const prod: any = { nome: nomeProd, unidade_medida: unid }
             if (grupo && !isNaN(grupo)) prod.grupo_id = grupo
-            // INJEÇÃO DO ID REAL PARA NÃO QUEBRAR O RELACIONAMENTO NAS COMPRAS
             if (idStr && !isNaN(parseInt(idStr))) {
                 prod.id = parseInt(idStr)
             }
@@ -120,8 +128,8 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
         const { error } = await supabase.from('produtos').insert(produtosParaInserir)
         if (error) throw error
 
-        alert(`✅ Sucesso Absoluto! ${produtosParaInserir.length} produtos foram importados. A página vai recarregar.`)
-        window.location.reload()
+        alert(`✅ Sucesso! ${produtosParaInserir.length} produtos foram importados.`)
+        onRefresh()
       } catch (error: any) {
         alert("Erro ao importar: " + error.message)
       } finally {
@@ -148,14 +156,14 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
         <div className="bg-card p-6 rounded-2xl border shadow-sm space-y-5 animate-in fade-in">
           <h3 className="text-xl font-bold flex items-center gap-2"><Tags className="text-[#C0392B]" /> Gerir Categorias</h3>
           <div className="flex gap-3">
-            <input value={novaCategoria} onChange={e => setNovaCategoria(e.target.value)} placeholder="Ex: Bebidas" className="flex-1 p-4 text-lg border-2 rounded-xl focus:border-[#C0392B] outline-none" />
-            <button onClick={handleSalvarCategoria} disabled={!novaCategoria.trim()} className="bg-[#1E6B43] text-white px-8 rounded-xl font-bold hover:bg-green-800 disabled:opacity-50">Adicionar</button>
+            <input disabled={isReadOnly} value={novaCategoria} onChange={e => setNovaCategoria(e.target.value)} placeholder="Ex: Bebidas" className="flex-1 p-4 text-lg border-2 rounded-xl focus:border-[#C0392B] outline-none disabled:opacity-50" />
+            <button onClick={handleSalvarCategoria} disabled={!novaCategoria.trim() || isReadOnly} className="bg-[#1E6B43] text-white px-8 rounded-xl font-bold hover:bg-green-800 disabled:opacity-50">Adicionar</button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
             {gruposDB.map(c => (
               <div key={c.id} className="p-4 bg-muted border rounded-xl flex justify-between items-center">
                 <span className="font-bold text-lg">{c.nome}</span>
-                <button onClick={() => handleDeletarCategoria(c.id, c.nome)} className="p-2 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 size={20}/></button>
+                <button disabled={isReadOnly} onClick={() => handleDeletarCategoria(c.id, c.nome)} className="p-2 text-red-500 hover:bg-red-100 rounded-lg disabled:opacity-30"><Trash2 size={20}/></button>
               </div>
             ))}
           </div>
@@ -163,48 +171,43 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
       ) : (
         <div className="space-y-6 animate-in fade-in">
           <div className={`bg-card rounded-2xl border-2 p-6 shadow-sm space-y-5 ${editandoId ? "border-orange-500 bg-orange-50/50" : "border-border"}`}>
-            
-            {/* CABEÇALHO DO CARD COM O NOVO BOTÃO DE IMPORTAR */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <h3 className="text-xl font-bold">{editandoId ? "Editar Produto" : "Novo Produto"}</h3>
-              
               <div className="flex items-center gap-3">
-                {/* BOTÃO MÁGICO AQUI */}
                 {!editandoId && (
                   <div>
-                    <input type="file" accept=".csv" id="csv-produtos" className="hidden" onChange={handleImportarCSVProdutos} disabled={importando} />
-                    <label htmlFor="csv-produtos" className="cursor-pointer bg-blue-100 text-blue-800 px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-200 border border-blue-300 shadow-sm flex items-center gap-2 transition-all">
+                    <input type="file" accept=".csv" id="csv-produtos" className="hidden" onChange={handleImportarCSVProdutos} disabled={importando || isReadOnly} />
+                    <label htmlFor="csv-produtos" className={`cursor-pointer px-4 py-2 rounded-lg font-bold text-sm border shadow-sm flex items-center gap-2 transition-all ${isReadOnly ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-blue-100 text-blue-800 hover:bg-blue-200 border-blue-300'}`}>
                        <Upload className="w-4 h-4"/>
                        {importando ? "A ler..." : "📥 Importar Produtos"}
                     </label>
                   </div>
                 )}
-                
                 {editandoId && <button onClick={() => {setNome(""); setGrupoId(""); setUnidade(""); setEditandoId(null)}} className="text-muted-foreground hover:text-red-500"><X /></button>}
               </div>
             </div>
 
             <div className="space-y-2">
               <label className="font-semibold block">Nome do Produto</label>
-              <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none" />
+              <input type="text" disabled={isReadOnly} value={nome} onChange={(e) => setNome(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50" />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               <div className="space-y-2">
                 <label className="font-semibold block">Categoria</label>
-                <select value={grupoId} onChange={(e) => setGrupoId(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none">
+                <select disabled={isReadOnly} value={grupoId} onChange={(e) => setGrupoId(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50">
                   <option value="">Selecione...</option>
                   {gruposDB.map((g) => <option key={g.id} value={g.id}>{g.nome}</option>)}
                 </select>
               </div>
               <div className="space-y-2">
                 <label className="font-semibold block">Unidade</label>
-                <select value={unidade} onChange={(e) => setUnidade(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none">
+                <select disabled={isReadOnly} value={unidade} onChange={(e) => setUnidade(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50">
                   <option value="">Selecione...</option>
                   {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
                 </select>
               </div>
             </div>
-            <button onClick={handleSalvarProduto} disabled={!nome.trim() || !grupoId || !unidade || salvando} className="w-full py-4 rounded-xl bg-[#C0392B] text-white font-bold disabled:opacity-50 flex justify-center gap-2">
+            <button onClick={handleSalvarProduto} disabled={!nome.trim() || !grupoId || !unidade || salvando || isReadOnly} className="w-full py-4 rounded-xl bg-[#C0392B] text-white font-bold disabled:opacity-50 flex justify-center gap-2">
               {salvando ? "A Guardar..." : editandoId ? <><CheckCircle2 /> Atualizar</> : <><PlusCircle /> Salvar</>}
             </button>
           </div>
@@ -221,8 +224,8 @@ export function Cadastros({ produtos, onAddProduto }: CadastrosProps) {
                       <li key={p.id} className="flex items-center justify-between px-6 py-4">
                         <div><span className="font-semibold block">{p.nome}</span><span className="text-xs text-muted-foreground uppercase">{p.unidade}</span></div>
                         <div className="flex gap-2">
-                          <button onClick={() => {setNome(p.nome); setGrupoId(String(g.id)); setUnidade(p.unidade); setEditandoId(p.id); window.scrollTo(0,0)}} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Pencil size={20}/></button>
-                          <button onClick={() => handleDeletarProduto(p.id, p.nome)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={20}/></button>
+                          <button disabled={isReadOnly} onClick={() => {setNome(p.nome); setGrupoId(String(g.id)); setUnidade(p.unidade); setEditandoId(p.id); window.scrollTo(0,0)}} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-30"><Pencil size={20}/></button>
+                          <button disabled={isReadOnly} onClick={() => handleDeletarProduto(p.id, p.nome)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-30"><Trash2 size={20}/></button>
                         </div>
                       </li>
                     ))}
