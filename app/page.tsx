@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { LayoutDashboard, ClipboardList, Package, Menu, Pizza, ReceiptText, LogOut, LineChart, CalendarDays, ShieldAlert, RefreshCw, ArrowRight, Lock, Edit3, Save, Unlock } from "lucide-react"
+import { LayoutDashboard, ClipboardList, Package, Menu, Pizza, ReceiptText, LogOut, LineChart, CalendarDays, ShieldAlert, RefreshCw, ArrowRight, Lock, Edit3 } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { Toaster, toast } from 'react-hot-toast'
 
@@ -46,49 +46,48 @@ function CMVApp() {
   const [isFechando, setIsFechando] = useState(false)
   
   const [semanaAberta, setSemanaAberta] = useState(false) 
-  const [modoAdminPassado, setModoAdminPassado] = useState(false)
   
   const [dataInicio, setDataInicio] = useState("")
   const [dataFim, setDataFim] = useState("")
   const [semanaOficial, setSemanaOficial] = useState<string>("") 
 
   const [produtos, setProdutos] = useState<any[]>([])
+  const [categorias, setCategorias] = useState<any[]>([])
   const [lancamentos, setLancamentos] = useState<any>({ faturamento: 0, compras: [], saidas: [], outrosCustos: {} })
   const [contagemInicial, setContagemInicial] = useState<ContagemEstoque>({})
   const [contagemFinal, setContagemFinal] = useState<ContagemEstoque>({})
 
-  const isHistorico = dataInicio !== "" && semanaOficial !== "" && dataInicio !== semanaOficial
-  const bloqueioAtivo = isHistorico && !modoAdminPassado
+  const isReadOnly = dataInicio !== "" && semanaOficial !== "" && dataInicio !== semanaOficial
 
   useEffect(() => {
     const initApp = async () => {
-      const { data } = await supabase.from('financas_semanais').select('*').order('data_inicio', { ascending: false }).limit(1)
-
-      if (data && data.length > 0) {
-        const ultima = data[0]
-        if (ultima.status === 'Aberta') {
-          setSemanaOficial(ultima.data_inicio)
-          setDataInicio(ultima.data_inicio)
-          setDataFim(ultima.data_fim)
-          setSemanaAberta(true)
-        } else {
-          const d = new Date(ultima.data_inicio + "T12:00:00")
-          d.setDate(d.getDate() + 7) 
-          const proxima = d.toISOString().split('T')[0]
-          
-          setSemanaOficial(proxima)
-          setDataInicio(proxima)
-          setDataFim(calcularDataFim(proxima))
-          setSemanaAberta(false)
-        }
+      const savedInicio = localStorage.getItem('sampa_dataInicio')
+      const savedAberta = localStorage.getItem('sampa_semanaAberta')
+      
+      if (savedAberta === 'true' && savedInicio) {
+        setSemanaOficial(savedInicio)
+        setDataInicio(savedInicio)
+        setDataFim(calcularDataFim(savedInicio))
+        setSemanaAberta(true)
       } else {
-        const proxima = getSegundaFeiraPassada()
-        setSemanaOficial(proxima)
-        setDataInicio(proxima)
-        setDataFim(calcularDataFim(proxima))
+        const { data } = await supabase.from('financas_semanais').select('data_inicio').order('data_inicio', { ascending: false }).limit(1)
+        let dataSugerida = ""
+
+        if (data && data.length > 0) {
+           const ultimaFechada = data[0].data_inicio
+           const d = new Date(ultimaFechada + "T12:00:00")
+           d.setDate(d.getDate() + 7) 
+           dataSugerida = d.toISOString().split('T')[0]
+        } else {
+           dataSugerida = getSegundaFeiraPassada()
+        }
+        
+        setSemanaOficial(dataSugerida)
+        setDataInicio(dataSugerida)
+        setDataFim(calcularDataFim(dataSugerida))
         setSemanaAberta(false)
       }
-      carregarProdutos()
+      carregarTudo()
     }
     initApp()
   }, [])
@@ -99,19 +98,59 @@ function CMVApp() {
     }
   }, [dataInicio, dataFim, semanaAberta])
 
-  // --- BUSCA OS PRODUTOS AGORA TRAZENDO A "CAIXINHA" DE PRODUÇÃO INTERNA ---
-  const carregarProdutos = async () => {
-    const { data, error } = await supabase.from('produtos').select('*, grupos(nome)').order('nome')
-    if (data) {
-      setProdutos(data.map((p: any) => ({
+  const carregarTudo = async () => {
+    const [{ data: prods }, { data: cats }] = await Promise.all([
+      supabase.from('produtos').select('*, grupos(nome)').order('nome'),
+      supabase.from('grupos').select('*').order('nome')
+    ])
+    if (prods) {
+      setProdutos(prods.map((p: any) => ({
         id: p.id,
         nome: p.nome,
-        unidade: p.unidade_medida, 
+        unidade: p.unidade_medida,
         grupo: p.grupos?.nome || 'Sem Grupo',
         grupo_id: p.grupo_id,
-        producao_interna: p.producao_interna || false // Puxando o sinalizador!
+        producao_interna: p.producao_interna || false
       })))
     }
+    if (cats) setCategorias(cats)
+  }
+
+  const handleSalvarCategoria = async (nome: string) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    const { error } = await supabase.from('grupos').insert([{ nome }])
+    if (error) toast.error("Erro ao salvar grupo.")
+    else { toast.success("Grupo salvo!"); carregarTudo(); }
+  }
+
+  const handleExcluirCategoria = async (id: number) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    if (!confirm("Excluir este grupo?")) return
+    const { error } = await supabase.from('grupos').delete().eq('id', id)
+    if (error) toast.error("Erro ao excluir!")
+    else { toast.success("Grupo removido!"); carregarTudo(); }
+  }
+
+  const handleSalvarProdutoNoBanco = async (novoProd: any) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    const { error } = await supabase.from('produtos').insert([novoProd])
+    if (error) toast.error("Erro ao salvar: " + error.message)
+    else { toast.success("Produto salvo!"); carregarTudo(); }
+  }
+
+  const handleEditarProdutoNoBanco = async (id: number, dadosEditados: any) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    const { error } = await supabase.from('produtos').update(dadosEditados).eq('id', id)
+    if (error) toast.error("Erro ao atualizar: " + error.message)
+    else { toast.success("Produto atualizado!"); carregarTudo(); }
+  }
+
+  const handleExcluirProdutoNoBanco = async (id: number) => {
+    if (isReadOnly) return toast.error("Período travado!")
+    if (!confirm("Tem certeza que deseja excluir este produto?")) return
+    const { error } = await supabase.from('produtos').delete().eq('id', id)
+    if (error) toast.error("Erro ao excluir!")
+    else { toast.success("Produto removido!"); carregarTudo(); }
   }
 
   const carregarDadosDoBanco = async () => {
@@ -134,54 +173,50 @@ function CMVApp() {
 
     setLancamentos({
       faturamento: fRes.data?.faturamento || 0,
-      outrosCustos: { embalagens: fRes.data?.embalagens || 0, materialLimpeza: fRes.data?.material_limpeza || 0, consumoSocios: fRes.data?.consumo_socios || 0 },
+      outrosCustos: { embalagens: fRes.data?.embalagens || 0, materialLimpeza: fRes.data?.material_limpeza || 0 },
       compras: (cRes.data || []).map(c => ({ id: c.id, produto: c.produtos?.nome || "Insumo", quantidade: c.quantidade, valorUnitario: c.valor_unitario, valorTotal: c.quantidade * c.valor_unitario })),
-      saidas: (sRes.data || []).map(s => ({ id: s.id, produto: s.produtos?.nome || "Insumo", quantidade: s.quantidade, motivo: s.motivo }))
+      saidas: (sRes.data || []).map(s => {
+        // TRATAMENTO EXTRA AQUI: Se for saída sem produto, garantimos que não dá erro ao ler "produtos.nome"
+        const nomeDoProduto = produtos.find(p => p.id === s.produto_id)?.nome || "Dedução Manual";
+        return {
+           id: s.id, 
+           produto: nomeDoProduto, 
+           quantidade: s.quantidade, 
+           motivo: s.motivo, 
+           valorTotal: s.valor_total || 0, 
+           descricaoManual: s.descricao_manual 
+        }
+      })
     })
     setContagemInicial(inicial)
     setContagemFinal(final)
   }
 
-  const iniciarSemana = async () => {
-    toast.loading("Sincronizando...", { id: "sync" })
-    const { data: existe } = await supabase.from('financas_semanais').select('id').eq('data_inicio', dataInicio).maybeSingle()
-
-    if (!existe) {
-      await supabase.from('financas_semanais').insert([{ data_inicio: dataInicio, data_fim: dataFim, status: 'Aberta' }])
-    } else {
-      await supabase.from('financas_semanais').update({ status: 'Aberta' }).eq('id', existe.id)
-    }
-
+  const iniciarSemana = () => {
     setSemanaAberta(true)
-    toast.success("Ciclo destravado para todos!", { id: "sync" })
+    localStorage.setItem('sampa_semanaAberta', 'true')
+    localStorage.setItem('sampa_dataInicio', dataInicio)
+    toast.success("Ciclo iniciado!")
   }
 
-  const handleSemanaFechada = async () => {
+  const handleSemanaFechada = () => {
     setIsFechando(true)
-    toast.loading("Fechando a semana...", { id: "fechamento" })
-    await supabase.from('financas_semanais').update({ status: 'Fechada' }).eq('data_inicio', semanaOficial)
-
     setTimeout(() => {
-      toast.success("Semana fechada!", { id: "fechamento" })
-      window.location.reload()
+      const d = new Date(semanaOficial + "T12:00:00")
+      d.setDate(d.getDate() + 7)
+      const novaSegunda = d.toISOString().split('T')[0]
+      
+      setSemanaOficial(novaSegunda)
+      setDataInicio(novaSegunda)
+      setDataFim(calcularDataFim(novaSegunda))
+      
+      localStorage.removeItem('sampa_semanaAberta')
+      localStorage.removeItem('sampa_dataInicio')
+      setSemanaAberta(false) 
+      
+      setIsFechando(false)
+      setTela("dashboard")
     }, 1500)
-  }
-
-  const handleAtivarEdicaoPassado = () => {
-    const senha = window.prompt("Digite a senha de autorização (1179):")
-    if (senha === "1179") {
-      setModoAdminPassado(true)
-      toast.success("Modo Edição Liberado!")
-    } else if (senha !== null) {
-      toast.error("Senha incorreta!")
-    }
-  }
-
-  const handleSairModoEdicao = () => {
-    setModoAdminPassado(false)
-    setDataInicio(semanaOficial)
-    setDataFim(calcularDataFim(semanaOficial))
-    toast.success("De volta à semana atual!")
   }
 
   if (!dataInicio) return null
@@ -194,7 +229,7 @@ function CMVApp() {
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center">
           <div className="bg-white p-12 rounded-[40px] shadow-2xl flex flex-col items-center">
              <RefreshCw className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-             <h3 className="text-2xl font-black text-slate-800">Processando Encerramento...</h3>
+             <h3 className="text-2xl font-black text-slate-800">Iniciando Próximo Ciclo...</h3>
           </div>
         </div>
       )}
@@ -226,45 +261,14 @@ function CMVApp() {
           <header className="h-20 bg-white border-b flex items-center justify-between px-8 shadow-sm">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-slate-500"><Menu /></button>
             <div className="flex items-center gap-4">
-              
-              <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border ${isHistorico ? (modoAdminPassado ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200') : 'bg-slate-50 border-slate-200'}`}>
-                {isHistorico ? (modoAdminPassado ? <Unlock className="w-5 h-5 text-amber-500" /> : <ShieldAlert className="w-5 h-5 text-red-500" />) : <CalendarDays className="w-5 h-5 text-blue-600" />}
+              <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border ${isReadOnly ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+                {isReadOnly ? <ShieldAlert className="w-5 h-5 text-red-500" /> : <CalendarDays className="w-5 h-5 text-blue-600" />}
                 <div className="flex flex-col">
-                  <span className={`text-[10px] font-black uppercase ${isHistorico ? (modoAdminPassado ? 'text-amber-500' : 'text-red-500') : 'text-slate-400'}`}>
-                    {isHistorico ? (modoAdminPassado ? 'Editando Passado (Admin)' : 'Auditando Passado') : 'Semana Atual'}
-                  </span>
-                  <input 
-                    type="date" 
-                    value={dataInicio} 
-                    onChange={(e) => {
-                      setDataInicio(e.target.value); 
-                      setDataFim(calcularDataFim(e.target.value));
-                      if (e.target.value === semanaOficial) setModoAdminPassado(false);
-                    }} 
-                    className="font-black text-sm bg-transparent outline-none cursor-pointer text-slate-800" 
-                  />
+                  <span className={`text-[10px] font-black uppercase ${isReadOnly ? 'text-red-500' : 'text-slate-400'}`}>{isReadOnly ? 'Auditando Passado' : 'Semana Atual'}</span>
+                  <input type="date" value={dataInicio} onChange={(e) => {setDataInicio(e.target.value); setDataFim(calcularDataFim(e.target.value));}} className="font-black text-sm bg-transparent outline-none cursor-pointer text-slate-800" />
                 </div>
               </div>
-              
-              {isHistorico && !modoAdminPassado && (
-                <div className="flex items-center gap-2">
-                  <button onClick={() => {setDataInicio(semanaOficial); setDataFim(calcularDataFim(semanaOficial));}} className="bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-slate-300 transition-colors">
-                    Voltar p/ Atual <ArrowRight className="w-4 h-4"/>
-                  </button>
-                  <button onClick={handleAtivarEdicaoPassado} className="bg-slate-900 text-white px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-slate-800 shadow-sm transition-all">
-                    <Edit3 className="w-4 h-4"/> Editar Passado
-                  </button>
-                </div>
-              )}
-
-              {modoAdminPassado && (
-                <button onClick={handleSairModoEdicao} className="bg-amber-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-amber-600 shadow-lg animate-pulse transition-all">
-                  <Save className="w-4 h-4"/> Salvar e Voltar p/ Atual
-                </button>
-              )}
-
             </div>
-            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold shadow-md hidden md:flex">SV</div>
           </header>
         )}
 
@@ -276,7 +280,7 @@ function CMVApp() {
                     <Lock className="w-10 h-10 text-blue-600" />
                   </div>
                   <h2 className="text-3xl font-black text-slate-800 mb-2">Iniciar Novo Ciclo</h2>
-                  <p className="text-slate-500 mb-8 font-medium">Verifique a data. Ela será aberta para todos os usuários.</p>
+                  <p className="text-slate-500 mb-8 font-medium">Sugerimos a data abaixo, mas você pode ajustá-la se necessário.</p>
                   
                   <div className="w-full text-left mb-8 group">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-4 flex items-center gap-1">
@@ -305,19 +309,24 @@ function CMVApp() {
               {tela === "cadastros" && (
                 <Cadastros 
                   produtos={produtos} 
-                  onRefresh={carregarProdutos} 
-                  isReadOnly={bloqueioAtivo} 
+                  categorias={categorias} 
+                  onAddProduto={handleSalvarProdutoNoBanco} 
+                  onEditProduto={handleEditarProdutoNoBanco} 
+                  onDeleteProduto={handleExcluirProdutoNoBanco} 
+                  onAddCategoria={handleSalvarCategoria} 
+                  onDeleteCategoria={handleExcluirCategoria} 
+                  isReadOnly={isReadOnly} 
                 />
               )}
               
-              {tela === "outros-custos" && <OutrosCustosDRE data={lancamentos} dataInicio={dataInicio} dataFim={dataFim} onChange={carregarDadosDoBanco} isReadOnly={bloqueioAtivo} />}
+              {tela === "outros-custos" && <OutrosCustosDRE data={lancamentos} dataInicio={dataInicio} dataFim={dataFim} onChange={carregarDadosDoBanco} isReadOnly={isReadOnly} />}
               {tela === "relatorios" && <Relatorios produtos={produtos} />}
               {tela === "estoque" && (
                 <Estoque 
                   dataInicio={dataInicio} dataFim={dataFim} produtos={produtos} data={lancamentos} 
                   contagemInicial={contagemInicial} contagemFinal={contagemFinal} 
                   onChange={carregarDadosDoBanco} onSemanaFechada={handleSemanaFechada} 
-                  isReadOnly={bloqueioAtivo} 
+                  isReadOnly={isReadOnly} 
                 />
               )}
             </div>

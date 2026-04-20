@@ -1,275 +1,226 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { PlusCircle, CheckCircle2, Package, Pencil, Trash2, X, Tags, Upload, Beaker } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { useState } from "react"
+import { Package, Plus, Search, Tag, Layers, Edit2, Trash2, X, Save, FolderTree, Beaker } from "lucide-react"
 import { toast } from "react-hot-toast"
 
-const UNIDADES = ["Kg", "Litro", "Unidade", "Pacote", "CX", "PCT"]
-
-export type Produto = {
-  id: number; nome: string; grupo: string; unidade: string; producao_interna: boolean;
-}
-
-interface CadastrosProps {
-  produtos: Produto[]; 
-  onRefresh: () => void;
-  isReadOnly: boolean;
-}
-
-export function Cadastros({ produtos, onRefresh, isReadOnly }: CadastrosProps) {
-  const [aba, setAba] = useState<"produtos" | "categorias">("produtos")
-  const [gruposDB, setGruposDB] = useState<{id: number, nome: string}[]>([])
+export function Cadastros({ produtos, categorias, onAddProduto, onEditProduto, onDeleteProduto, onAddCategoria, onDeleteCategoria, isReadOnly }: any) {
+  const [abaCadastros, setAbaCadastros] = useState<"insumos" | "categorias">("insumos")
   
+  // Estados para Insumos (Base Vilhena)
   const [nome, setNome] = useState("")
-  const [grupoId, setGrupoId] = useState("")
-  const [unidade, setUnidade] = useState("")
+  const [unidade, setUnidade] = useState("KG")
+  const [grupoId, setGrupoId] = useState(categorias?.[0]?.id?.toString() || "")
   const [producaoInterna, setProducaoInterna] = useState(false)
-  
+  const [busca, setBusca] = useState("")
   const [editandoId, setEditandoId] = useState<number | null>(null)
-  const [salvando, setSalvando] = useState(false)
-  const [novaCategoria, setNovaCategoria] = useState("")
-  const [importando, setImportando] = useState(false)
 
-  useEffect(() => { carregarCategorias() }, [])
+  // Estados para Categorias
+  const [novaCategoriaNome, setNovaCategoriaNome] = useState("")
 
-  const carregarCategorias = async () => {
-    const { data } = await supabase.from('grupos').select('*').order('nome')
-    if (data) setGruposDB(data)
-  }
-
-  const resetForm = () => {
-    setNome(""); setGrupoId(""); setUnidade(""); setProducaoInterna(false); setEditandoId(null); setSalvando(false);
-  }
-
-  const handleSalvarProduto = async () => {
+  const handleSalvarInsumo = () => {
     if (isReadOnly) return toast.error("Período bloqueado!")
-    if (!nome.trim() || !grupoId || !unidade) return toast.error("Preencha os campos!")
-    
-    setSalvando(true)
-    const payload = { nome: nome.trim(), unidade_medida: unidade, grupo_id: parseInt(grupoId), producao_interna: producaoInterna }
+    if (!nome.trim() || !grupoId) return toast.error("Preencha todos os campos e certifique-se de ter um grupo!")
+
+    const dados = { 
+      nome: nome.trim(), 
+      unidade_medida: unidade, 
+      grupo_id: parseInt(grupoId),
+      producao_interna: producaoInterna 
+    }
 
     if (editandoId) {
-      await supabase.from('produtos').update(payload).eq('id', editandoId)
-      toast.success("Atualizado!")
+      onEditProduto(editandoId, dados)
+      setEditandoId(null)
     } else {
-      await supabase.from('produtos').insert([payload])
-      toast.success("Salvo!")
+      onAddProduto(dados)
     }
-    
-    resetForm()
-    onRefresh()
+
+    setNome("")
+    setUnidade("KG")
+    setProducaoInterna(false)
   }
 
-  const handleDeletarProduto = async (id: number, nomeProd: string) => {
+  const iniciarEdicao = (p: any) => {
+    setEditandoId(p.id)
+    setNome(p.nome)
+    setUnidade(p.unidade)
+    setGrupoId(p.grupo_id?.toString() || "")
+    setProducaoInterna(p.producao_interna)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const cancelarEdicao = () => {
+    setEditandoId(null)
+    setNome("")
+    setUnidade("KG")
+    setProducaoInterna(false)
+  }
+
+  const handleSalvarNovaCategoria = () => {
     if (isReadOnly) return toast.error("Período bloqueado!")
-    if (window.confirm(`Apagar o produto ${nomeProd} definitivamente?`)) {
-      await supabase.from('produtos').delete().eq('id', id)
-      toast.success("Deletado!")
-      onRefresh()
-    }
+    if (!novaCategoriaNome.trim()) return toast.error("Digite o nome da categoria!")
+    onAddCategoria(novaCategoriaNome.trim())
+    setNovaCategoriaNome("")
   }
 
-  const handleSalvarCategoria = async () => {
-    if (isReadOnly) return toast.error("Período bloqueado!")
-    if (!novaCategoria.trim()) return
-    await supabase.from('grupos').insert([{ nome: novaCategoria.trim() }])
-    setNovaCategoria("")
-    toast.success("Categoria salva!")
-    carregarCategorias()
-  }
-
-  const handleDeletarCategoria = async (id: number, nomeCat: string) => {
-    if (isReadOnly) return toast.error("Período bloqueado!")
-    if (window.confirm(`ATENÇÃO: Apagar a categoria ${nomeCat} vai afetar os produtos dentro dela. Continuar?`)) {
-      await supabase.from('grupos').delete().eq('id', id)
-      toast.success("Categoria deletada!")
-      carregarCategorias()
-      onRefresh()
-    }
-  }
-
-  // Importar CSV
-  const handleImportarCSVProdutos = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isReadOnly) return toast.error("Período bloqueado!")
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    setImportando(true)
-    const reader = new FileReader()
-    reader.onload = async (event) => {
-      try {
-        const text = event.target?.result as string
-        const delimitador = text.includes(';') ? ';' : ','
-        const rows = text.split('\n').map(row => row.split(delimitador))
-
-        const headers = rows[0].map(h => h.trim().replace(/"/g, ''))
-        const idIdx = headers.indexOf('id')
-        const nomeIdx = headers.indexOf('nome')
-        const unidIdx = headers.indexOf('unidade_medida')
-        const grupoIdx = headers.indexOf('grupo_id')
-
-        if (nomeIdx === -1) {
-          alert("❌ CSV inválido! O ficheiro precisa ter no mínimo a coluna 'nome'.")
-          setImportando(false); return
-        }
-
-        const produtosParaInserir = []
-        for (let i = 1; i < rows.length; i++) {
-          if (!rows[i] || rows[i].length < 2) continue
-          
-          const idStr = idIdx !== -1 ? rows[i][idIdx]?.replace(/"/g, '') : null
-          const nomeProd = rows[i][nomeIdx]?.replace(/"/g, '')
-          const unid = unidIdx !== -1 ? rows[i][unidIdx]?.replace(/"/g, '') : 'Unidade'
-          const grupo = grupoIdx !== -1 ? parseInt(rows[i][grupoIdx]?.replace(/"/g, '')) : null
-
-          if (nomeProd) {
-            const prod: any = { nome: nomeProd, unidade_medida: unid }
-            if (grupo && !isNaN(grupo)) prod.grupo_id = grupo
-            if (idStr && !isNaN(parseInt(idStr))) {
-                prod.id = parseInt(idStr)
-            }
-            produtosParaInserir.push(prod)
-          }
-        }
-
-        if (produtosParaInserir.length === 0) {
-            alert("Nenhum produto encontrado no ficheiro."); setImportando(false); return
-        }
-
-        const { error } = await supabase.from('produtos').insert(produtosParaInserir)
-        if (error) throw error
-
-        alert(`✅ Sucesso! ${produtosParaInserir.length} produtos foram importados.`)
-        onRefresh()
-      } catch (error: any) {
-        alert("Erro ao importar: " + error.message)
-      } finally {
-        setImportando(false)
-        if(e.target) e.target.value = ''
-      }
-    }
-    reader.readAsText(file)
-  }
-
-  const byGroup = gruposDB.reduce<Record<string, Produto[]>>((acc, g) => {
-    acc[g.nome] = produtos.filter((p) => p.grupo === g.nome)
-    return acc
-  }, {})
+  const produtosFiltrados = produtos?.filter((p: any) => p.nome.toLowerCase().includes(busca.toLowerCase())) || []
 
   return (
-    <div className="space-y-6">
-      <div className="flex gap-2 p-1 bg-muted rounded-xl w-fit">
-        <button onClick={() => setAba("produtos")} className={`px-6 py-2.5 rounded-lg font-bold transition-all ${aba === "produtos" ? "bg-white text-[#C0392B] shadow" : "text-muted-foreground"}`}>Produtos</button>
-        <button onClick={() => setAba("categorias")} className={`px-6 py-2.5 rounded-lg font-bold transition-all ${aba === "categorias" ? "bg-white text-[#C0392B] shadow" : "text-muted-foreground"}`}>Categorias</button>
+    <div className="space-y-6 font-sans pb-10">
+      <div className="flex justify-between items-center bg-white p-6 rounded-3xl border shadow-sm">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><Package className="w-6 h-6 text-blue-600"/> Base de Cadastros</h2>
+          <p className="text-slate-500 text-sm font-medium">Gestão de ingredientes e suas classificações.</p>
+        </div>
       </div>
 
-      {aba === "categorias" ? (
-        <div className="bg-card p-6 rounded-2xl border shadow-sm space-y-5 animate-in fade-in">
-          <h3 className="text-xl font-bold flex items-center gap-2"><Tags className="text-[#C0392B]" /> Gerir Categorias</h3>
-          <div className="flex gap-3">
-            <input disabled={isReadOnly} value={novaCategoria} onChange={e => setNovaCategoria(e.target.value)} placeholder="Ex: Bebidas" className="flex-1 p-4 text-lg border-2 rounded-xl focus:border-[#C0392B] outline-none disabled:opacity-50" />
-            <button onClick={handleSalvarCategoria} disabled={!novaCategoria.trim() || isReadOnly} className="bg-[#1E6B43] text-white px-8 rounded-xl font-bold hover:bg-green-800 disabled:opacity-50">Adicionar</button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-            {gruposDB.map(c => (
-              <div key={c.id} className="p-4 bg-muted border rounded-xl flex justify-between items-center">
-                <span className="font-bold text-lg">{c.nome}</span>
-                <button disabled={isReadOnly} onClick={() => handleDeletarCategoria(c.id, c.nome)} className="p-2 text-red-500 hover:bg-red-100 rounded-lg disabled:opacity-30"><Trash2 size={20}/></button>
+      <div className="flex bg-white p-2 rounded-2xl shadow-sm border overflow-x-auto w-fit">
+        <button onClick={() => setAbaCadastros("insumos")} className={`flex items-center gap-2 min-w-[140px] justify-center py-3 px-6 rounded-xl font-bold text-sm transition-all ${abaCadastros === "insumos" ? "bg-blue-600 text-white shadow-lg" : "text-slate-500 hover:bg-slate-50"}`}>
+          <Layers className="w-4 h-4"/> Insumos
+        </button>
+        <button onClick={() => setAbaCadastros("categorias")} className={`flex items-center gap-2 min-w-[140px] justify-center py-3 px-6 rounded-xl font-bold text-sm transition-all ${abaCadastros === "categorias" ? "bg-blue-600 text-white shadow-lg" : "text-slate-500 hover:bg-slate-50"}`}>
+          <FolderTree className="w-4 h-4"/> Categorias
+        </button>
+      </div>
+
+      {abaCadastros === "insumos" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+          <div className={`bg-white p-8 rounded-3xl border-2 h-fit sticky top-6 transition-all ${editandoId ? 'border-blue-500 shadow-xl' : 'border-slate-100 shadow-sm'}`}>
+            <h3 className="font-black text-lg text-slate-800 mb-6 flex items-center gap-2">
+              {editandoId ? <Edit2 className="w-5 h-5 text-blue-500"/> : <Plus className="w-5 h-5 text-emerald-500"/>}
+              {editandoId ? "Editar Produto" : "Adicionar Novo"}
+            </h3>
+
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase">Nome</label>
+                <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-500" placeholder="Ex: Queijo Mussarela" />
               </div>
-            ))}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase">Unidade</label>
+                  <select value={unidade} onChange={(e) => setUnidade(e.target.value)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none">
+                    <option value="KG">KG</option><option value="UN">UN</option><option value="L">L</option><option value="CX">CX</option><option value="PCT">PCT</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase">Categoria</label>
+                  <select value={grupoId} onChange={(e) => setGrupoId(e.target.value)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none">
+                    {categorias?.length === 0 && <option value="">Cadastre um grupo antes...</option>}
+                    {categorias?.map((cat: any) => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <label className="flex items-center gap-3 p-4 border-2 rounded-xl bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors">
+                  <input 
+                    type="checkbox" 
+                    disabled={isReadOnly} 
+                    checked={producaoInterna} 
+                    onChange={(e) => setProducaoInterna(e.target.checked)} 
+                    className="w-5 h-5 accent-blue-600 cursor-pointer" 
+                  />
+                  <div>
+                    <p className="font-bold text-slate-800 flex items-center gap-2 text-sm">Fabricado na Loja <Beaker className="w-4 h-4 text-blue-500"/></p>
+                    <p className="text-[10px] text-slate-500 font-medium">Não gera custo duplo no CMV.</p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                {editandoId && (
+                  <button onClick={cancelarEdicao} className="flex-1 bg-slate-100 text-slate-600 py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"><X className="w-4 h-4"/> CANCELAR</button>
+                )}
+                <button onClick={handleSalvarInsumo} className={`flex-[2] py-4 rounded-xl font-black flex items-center justify-center gap-2 transition-all shadow-lg ${editandoId ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}>
+                  {editandoId ? <Save className="w-4 h-4"/> : <Plus className="w-4 h-4"/>}
+                  {editandoId ? "SALVAR ALTERAÇÃO" : "CADASTRAR"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-2 bg-white rounded-3xl border shadow-sm overflow-hidden flex flex-col h-[600px]">
+            <div className="p-6 border-b bg-slate-50 flex justify-between items-center gap-4">
+               <h3 className="font-black text-lg text-slate-800 flex items-center gap-2"><Layers className="w-5 h-5 text-blue-600"/> Insumos Cadastrados</h3>
+               <div className="relative w-64">
+                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"/><input type="text" placeholder="Buscar..." value={busca} onChange={e => setBusca(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-blue-500 shadow-sm" />
+               </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="sticky top-0 bg-white shadow-sm font-black text-[10px] uppercase text-slate-400 z-10">
+                  <tr><th className="py-4 px-6">Produto</th><th className="py-4 px-6">Categoria</th><th className="py-4 px-6 text-center">Unidade</th><th className="py-4 px-6 text-right">Ações</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {produtosFiltrados.length === 0 ? (
+                    <tr><td colSpan={4} className="py-10 text-center text-slate-400 font-bold">Nenhum produto cadastrado.</td></tr>
+                  ) : (
+                    produtosFiltrados.map((p: any) => (
+                      <tr key={p.id} className="hover:bg-slate-50 transition-colors group">
+                        <td className="py-4 px-6 font-bold text-slate-700">
+                          {p.nome}
+                          {p.producao_interna && <span className="ml-2 bg-blue-100 text-blue-600 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Fabricado</span>}
+                        </td>
+                        <td className="py-4 px-6"><span className="px-2 py-1 rounded-md bg-slate-100 text-slate-500 text-[10px] font-bold uppercase">{p.grupo}</span></td>
+                        <td className="py-4 px-6 text-center font-black text-slate-400">{p.unidade}</td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => iniciarEdicao(p)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 className="w-4 h-4"/></button>
+                            <button onClick={() => onDeleteProduto(p.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4"/></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
-      ) : (
-        <div className="space-y-6 animate-in fade-in">
-          <div className={`bg-card rounded-2xl border-2 p-6 shadow-sm space-y-5 ${editandoId ? "border-orange-500 bg-orange-50/50" : "border-border"}`}>
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <h3 className="text-xl font-bold">{editandoId ? "Editar Produto" : "Novo Produto"}</h3>
-              <div className="flex items-center gap-3">
-                {!editandoId && (
-                  <div>
-                    <input type="file" accept=".csv" id="csv-produtos" className="hidden" onChange={handleImportarCSVProdutos} disabled={importando || isReadOnly} />
-                    <label htmlFor="csv-produtos" className={`cursor-pointer px-4 py-2 rounded-lg font-bold text-sm border shadow-sm flex items-center gap-2 transition-all ${isReadOnly ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-blue-100 text-blue-800 hover:bg-blue-200 border-blue-300'}`}>
-                       <Upload className="w-4 h-4"/>
-                       {importando ? "A ler..." : "📥 Importar Produtos"}
-                    </label>
-                  </div>
-                )}
-                {editandoId && <button onClick={resetForm} className="text-muted-foreground hover:text-red-500"><X /></button>}
-              </div>
-            </div>
+      )}
 
-            <div className="space-y-2">
-              <label className="font-semibold block">Nome do Produto</label>
-              <input type="text" disabled={isReadOnly} value={nome} onChange={(e) => setNome(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50" />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <div className="space-y-2">
-                <label className="font-semibold block">Categoria Principal</label>
-                <select disabled={isReadOnly} value={grupoId} onChange={(e) => setGrupoId(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50">
-                  <option value="">Selecione...</option>
-                  {gruposDB.map((g) => <option key={g.id} value={g.id}>{g.nome}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="font-semibold block">Unidade</label>
-                <select disabled={isReadOnly} value={unidade} onChange={(e) => setUnidade(e.target.value)} className="w-full p-3.5 rounded-xl border-2 bg-background focus:border-[#C0392B] outline-none disabled:opacity-50">
-                  <option value="">Selecione...</option>
-                  {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* A NOVA CAIXINHA DE MÁGICA */}
-            <div className="mt-4">
-              <label className="flex items-center gap-3 p-4 border-2 rounded-xl bg-background cursor-pointer hover:bg-slate-50 transition-colors">
-                <input 
-                  type="checkbox" 
-                  disabled={isReadOnly} 
-                  checked={producaoInterna} 
-                  onChange={(e) => setProducaoInterna(e.target.checked)} 
-                  className="w-5 h-5 accent-[#C0392B] cursor-pointer" 
-                />
-                <div>
-                  <p className="font-bold text-slate-800 flex items-center gap-2">Produto Fabricado na Loja (Subproduto) <Beaker className="w-4 h-4 text-blue-500"/></p>
-                  <p className="text-xs text-slate-500 font-medium">O sistema vai manter a contagem de estoque, mas ignorar o custo no CMV para evitar bitributação.</p>
+      {abaCadastros === "categorias" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-300">
+          <div className="bg-white p-8 rounded-3xl border shadow-sm h-fit">
+             <h3 className="font-black text-lg text-slate-800 mb-6 flex items-center gap-2">
+                <Plus className="w-5 h-5 text-emerald-500"/> Nova Categoria
+             </h3>
+             <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase">Nome do Grupo</label>
+                  <input type="text" value={novaCategoriaNome} onChange={(e) => setNovaCategoriaNome(e.target.value)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-500" placeholder="Ex: Queijos Finos" />
                 </div>
-              </label>
-            </div>
-
-            <button onClick={handleSalvarProduto} disabled={!nome.trim() || !grupoId || !unidade || salvando || isReadOnly} className="w-full py-4 rounded-xl bg-[#C0392B] text-white font-bold disabled:opacity-50 flex justify-center gap-2">
-              {salvando ? "A Guardar..." : editandoId ? <><CheckCircle2 /> Atualizar</> : <><PlusCircle /> Salvar</>}
-            </button>
+                <button onClick={handleSalvarNovaCategoria} className="w-full bg-emerald-600 text-white py-4 rounded-xl font-black shadow-lg shadow-emerald-600/30 hover:bg-emerald-700 transition-all flex items-center justify-center gap-2">
+                  <Plus className="w-4 h-4"/> ADICIONAR GRUPO
+                </button>
+             </div>
           </div>
 
-          <div className="space-y-6">
-            {gruposDB.map((g) => {
-              const lista = byGroup[g.nome]
-              if (!lista || lista.length === 0) return null
-              return (
-                <div key={g.id} className="bg-card rounded-2xl border shadow-sm overflow-hidden">
-                  <div className="px-6 py-4 bg-muted border-b flex items-center gap-2"><Package className="text-[#C0392B]" /><h4 className="text-lg font-bold">{g.nome}</h4><span className="ml-auto text-sm font-medium bg-background px-2 py-0.5 rounded-full border">{lista.length} itens</span></div>
-                  <ul className="divide-y">
-                    {lista.map((p) => (
-                      <li key={p.id} className="flex items-center justify-between px-6 py-4">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold block">{p.nome}</span>
-                            {p.producao_interna && <span className="bg-blue-100 text-blue-600 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Fabricado</span>}
-                          </div>
-                          <span className="text-xs text-muted-foreground uppercase">{p.unidade}</span>
-                        </div>
-                        <div className="flex gap-2">
-                          <button disabled={isReadOnly} onClick={() => {setNome(p.nome); setGrupoId(String(g.id)); setUnidade(p.unidade); setProducaoInterna(p.producao_interna); setEditandoId(p.id); window.scrollTo(0,0)}} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-30"><Pencil size={20}/></button>
-                          <button disabled={isReadOnly} onClick={() => handleDeletarProduto(p.id, p.nome)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-30"><Trash2 size={20}/></button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )
-            })}
+          <div className="bg-white rounded-3xl border shadow-sm overflow-hidden flex flex-col h-[500px]">
+             <div className="p-6 border-b bg-slate-50">
+               <h3 className="font-black text-lg text-slate-800 flex items-center gap-2"><FolderTree className="w-5 h-5 text-blue-600"/> Grupos Ativos</h3>
+             </div>
+             <div className="flex-1 overflow-y-auto">
+               <table className="w-full text-sm text-left">
+                 <thead className="sticky top-0 bg-white shadow-sm font-black text-[10px] uppercase text-slate-400">
+                   <tr><th className="py-4 px-6">Nome do Grupo</th><th className="py-4 px-6 text-right">Ação</th></tr>
+                 </thead>
+                 <tbody className="divide-y divide-slate-50">
+                   {categorias?.map((cat: any) => (
+                     <tr key={cat.id} className="hover:bg-slate-50 transition-colors group">
+                       <td className="py-4 px-6 font-bold text-slate-700"><Tag className="w-3 h-3 inline-block mr-2 text-slate-400"/>{cat.nome}</td>
+                       <td className="py-4 px-6 text-right">
+                         <button onClick={() => onDeleteCategoria(cat.id)} className="p-2 text-slate-300 hover:text-red-600 bg-white shadow-sm border border-slate-100 rounded-lg transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4"/></button>
+                       </td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
           </div>
         </div>
       )}

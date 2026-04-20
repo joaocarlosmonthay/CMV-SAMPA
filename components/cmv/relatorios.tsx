@@ -9,8 +9,8 @@ const formatBRL = (v: number) => {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 }
 const formatPerc = (v: number) => {
-  if (isNaN(v) || v === null || !isFinite(v)) return "0.0%"
-  return `${v.toFixed(1)}%`
+  if (isNaN(v) || v === null || !isFinite(v)) return "0.00%"
+  return `${v.toFixed(2)}%`
 }
 
 export function Relatorios({ produtos }: { produtos: any[] }) {
@@ -50,10 +50,12 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
 
       const { data: dbCompras } = await supabase.from('compras').select('*').gte('data_compra', oldestDate).lte('data_compra', newestDate)
       const { data: dbEstoques } = await supabase.from('estoques').select('*').gte('data_contagem', oldestDate).lte('data_contagem', newestDate)
+      const { data: dbSaidas } = await supabase.from('saidas_avulsas').select('*').gte('data_saida', oldestDate).lte('data_saida', newestDate)
 
       const semanasProcessadas = financasDoMes.map(f => {
         let comp = dbCompras?.filter(c => c.data_compra >= f.data_inicio && c.data_compra <= f.data_fim) || []
         let est = dbEstoques?.filter(e => e.data_contagem >= f.data_inicio && e.data_contagem <= f.data_fim) || []
+        let saidas = dbSaidas?.filter(s => s.data_saida >= f.data_inicio && s.data_saida <= f.data_fim) || []
 
         let prodsFiltrados = produtos || []
         if (filtroCategoria === "Cozinha") {
@@ -82,7 +84,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           let custoConsumido = (qtdIni * valIni) + custoComp - (qtdFin * valFin)
           const qtdConsumida = qtdIni + qtdComp - qtdFin
 
-          // A REGRA DO DAVI: Se a caixinha "Produção Interna" estiver marcada, zera o custo financeiro
           if (p.producao_interna) {
              custoConsumido = 0;
           }
@@ -97,11 +98,17 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           }
         }).filter(i => i.valorConsumido > 0 || i.qtdConsumida > 0).sort((a, b) => b.valorConsumido - a.valorConsumido)
 
-        const cmvValorReal = consumoDetalhado.reduce((acc, curr) => acc + curr.valorConsumido, 0)
+        const totalDed = saidas.reduce((a, s) => a + parseFloat(s.valor_total || 0), 0)
+        let cmvValorReal = consumoDetalhado.reduce((acc, curr) => acc + curr.valorConsumido, 0)
+        
+        // Se for o painel Geral, abater as deduções
+        if (filtroCategoria === "Geral") {
+          cmvValorReal -= totalDed;
+        }
 
         const inicialVisual = est.filter(e => e.tipo_contagem === 'Inicial' && prodsFiltrados.find(p => p.id === e.produto_id)).reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
-        const finalVisual = est.filter(e => e.tipo_contagem === 'Final' && prodsFiltrados.find(p => p.id === e.produto_id)).reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
         const comprasVisuais = comp.filter(c => prodsFiltrados.find(p => p.id === c.produto_id)).reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
+        const deducoesVisuais = filtroCategoria === "Geral" ? totalDed : 0
 
         const dFinal = new Date(f.data_inicio + "T12:00:00")
         dFinal.setDate(dFinal.getDate() + 6)
@@ -115,7 +122,7 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           faturamento: f.faturamento, 
           inicial: inicialVisual, 
           compras: comprasVisuais, 
-          final: finalVisual, 
+          deducoes: deducoesVisuais,
           cmvValor: cmvValorReal,
           consumoDetalhado 
         }
@@ -213,13 +220,13 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                   {semanasData.map(s => <td key={s.id} className="p-4 font-black text-emerald-600">{formatBRL(s.faturamento)}</td>)}
                 </tr>
                 <tr className="hover:bg-slate-50">
-                  <td className="p-4 text-left font-bold text-slate-500 bg-slate-50/50">Compras ({filtroCategoria})</td>
-                  {semanasData.map(s => <td key={s.id} className="p-4 text-amber-600 font-bold">{formatBRL(s.compras)}</td>)}
+                  <td className="p-4 text-left font-bold text-slate-500 bg-slate-50/50">Deduções / Saídas (-)</td>
+                  {semanasData.map(s => <td key={s.id} className="p-4 text-rose-500 font-bold">{formatBRL(s.deducoes)}</td>)}
                 </tr>
                 <tr className="bg-blue-50/20 hover:bg-blue-50/40">
                   <td className="p-4 text-left font-bold text-slate-700 bg-blue-50/30 flex flex-col">
-                     Custo de CMV (R$)
-                     <span className="text-[9px] font-black text-blue-500">*Ignora Subprodutos</span>
+                     CMV Líquido (R$)
+                     <span className="text-[9px] font-black text-blue-500">*Ignora Subprodutos e Abate Saídas</span>
                   </td>
                   {semanasData.map(s => <td key={s.id} className="p-4 font-black text-slate-800">{formatBRL(s.cmvValor)}</td>)}
                 </tr>
@@ -259,7 +266,7 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           {semanaSel.consumoDetalhado.map((item: any, i: number) => (
             <div key={i} className={`flex flex-col p-5 bg-white hover:bg-slate-50 transition-colors rounded-2xl border shadow-sm ${item.producao_interna ? 'border-blue-200 bg-blue-50/20' : 'border-slate-200'}`}>
               
-              <div className="flex justify-between items-center mb-3">
+              <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center gap-3">
                   <div className={`w-8 h-8 rounded-full font-black flex items-center justify-center text-xs ${item.producao_interna ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>{i + 1}º</div>
                   <div>
@@ -277,23 +284,29 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-2 bg-slate-100/50 p-3 rounded-xl text-xs font-bold text-center border border-slate-100">
+              {/* A ORDEM DO TIO TIAGO COM FONTES GIGANTES */}
+              <div className="grid grid-cols-4 gap-2 bg-slate-50 p-4 rounded-xl text-center border border-slate-200 shadow-inner">
+                
                 <div className="flex flex-col border-r border-slate-200/60">
-                  <span className="text-slate-400 text-[9px] uppercase">Tinha (Inicial)</span>
-                  <span className="text-slate-600">{item.qtdIni} <span className="text-[9px]">{item.unidade}</span></span>
+                  <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Tinha (Inicial)</span>
+                  <span className="text-slate-700 font-black text-xl md:text-2xl mt-1">{item.qtdIni} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
                 </div>
+                
                 <div className="flex flex-col border-r border-slate-200/60">
-                  <span className="text-amber-500/80 text-[9px] uppercase">+ Comprou</span>
-                  <span className="text-amber-600">{item.qtdComp} <span className="text-[9px]">{item.unidade}</span></span>
+                  <span className="text-amber-500/80 text-[10px] uppercase font-bold tracking-wider">+ Comprou</span>
+                  <span className="text-amber-600 font-black text-xl md:text-2xl mt-1">{item.qtdComp} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
                 </div>
+                
                 <div className="flex flex-col border-r border-slate-200/60">
-                  <span className="text-blue-400/80 text-[9px] uppercase">- Sobrou (Final)</span>
-                  <span className="text-blue-600">{item.qtdFin} <span className="text-[9px]">{item.unidade}</span></span>
+                  <span className="text-purple-500/80 text-[10px] uppercase font-bold tracking-wider">= Consumiu</span>
+                  <span className="text-purple-600 font-black text-xl md:text-2xl mt-1">{item.qtdConsumida} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
                 </div>
+                
                 <div className="flex flex-col justify-center">
-                  <span className="text-slate-400 text-[9px] uppercase">= Consumiu</span>
-                  <span className="text-slate-800 font-black">{item.qtdConsumida} <span className="text-[9px]">{item.unidade}</span></span>
+                  <span className="text-blue-400/80 text-[10px] uppercase font-bold tracking-wider">Sobrou (Final)</span>
+                  <span className="text-blue-600 font-black text-xl md:text-2xl mt-1">{item.qtdFin} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
                 </div>
+                
               </div>
 
             </div>
@@ -303,4 +316,4 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
 
     </div>
   )
-}
+} 

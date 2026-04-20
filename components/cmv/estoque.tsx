@@ -1,42 +1,34 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Package, ShoppingCart, DollarSign, Trash2, Save, CheckCircle2, ArrowDownToLine, Lock, Pencil, X } from "lucide-react"
+import { Package, ShoppingCart, DollarSign, Trash2, Save, CheckCircle2, ArrowDownToLine, Lock, Pencil, X, MinusCircle } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { toast } from "react-hot-toast"
 
-const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+// PROTEÇÃO BLINDADA: Tenta converter e formata. Se tudo falhar, devolve R$ 0,00 e NUNCA QUEBRA A TELA.
+const formatBRL = (v: any) => {
+  try {
+    if (v === null || v === undefined || v === "") return "R$ 0,00";
+    const num = Number(v);
+    if (isNaN(num)) return "R$ 0,00";
+    return num.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  } catch (error) {
+    return "R$ 0,00";
+  }
+}
 
 export type ContagemEstoque = Record<number, { qtd: string; valor: string }>
 
-interface EstoqueProps {
-  dataInicio: string
-  dataFim: string
-  produtos: any[]
-  data: any
-  contagemInicial: ContagemEstoque
-  contagemFinal: ContagemEstoque
-  onChange: () => Promise<void>
-  onSemanaFechada: () => void
-  isReadOnly: boolean
-}
-
-export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, contagemFinal, onChange, onSemanaFechada, isReadOnly }: EstoqueProps) {
+export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, contagemFinal, onChange, onSemanaFechada, isReadOnly }: any) {
   const [aba, setAba] = useState<"inicial" | "compras" | "saidas" | "faturamento" | "final">("inicial")
-  const [novoLancamento, setNovoLancamento] = useState({ produto: "", quantidade: "", valorTotal: "", motivo: "Quebra/Desperdício" })
+  const [novoLancamento, setNovoLancamento] = useState({ produto: "", quantidade: "", valorTotal: "", motivo: "Quebra/Desperdício", descricaoManual: "", modoManual: false })
   const [faturamento, setFaturamento] = useState(data.faturamento?.toString() || "")
   const [contagem, setContagem] = useState<ContagemEstoque>({})
   
-  // NOVO: Estado para rastrear qual compra estamos editando
   const [editandoCompraId, setEditandoCompraId] = useState<number | null>(null)
 
-  useEffect(() => {
-    setContagem(aba === "inicial" ? contagemInicial : contagemFinal)
-  }, [aba, contagemInicial, contagemFinal])
-
-  useEffect(() => {
-    setFaturamento(data.faturamento?.toString() || "")
-  }, [data.faturamento])
+  useEffect(() => { setContagem(aba === "inicial" ? contagemInicial : contagemFinal) }, [aba, contagemInicial, contagemFinal])
+  useEffect(() => { setFaturamento(data.faturamento?.toString() || "") }, [data.faturamento])
 
   const handleSalvarCompra = async () => {
     if (isReadOnly) return toast.error("Período travado para edições!")
@@ -47,51 +39,84 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
 
     const vTotal = parseFloat(novoLancamento.valorTotal.replace(',', '.')), qtd = parseFloat(novoLancamento.quantidade.replace(',', '.'))
     
+    const precoUnitarioHires = vTotal / qtd;
+
     if (editandoCompraId) {
-      // ATUALIZAR COMPRA EXISTENTE
-      await supabase.from('compras').update({ 
+      const { error } = await supabase.from('compras').update({ 
         produto_id: prod.id, 
         quantidade: qtd, 
-        valor_unitario: vTotal / qtd 
+        valor_unitario: precoUnitarioHires 
       }).eq('id', editandoCompraId)
+      if (error) return toast.error("Erro: " + error.message)
       toast.success("Compra atualizada!")
       setEditandoCompraId(null)
     } else {
-      // INSERIR NOVA COMPRA
-      await supabase.from('compras').insert([{ 
+      const { error } = await supabase.from('compras').insert([{ 
         produto_id: prod.id, 
         quantidade: qtd, 
-        valor_unitario: vTotal / qtd, 
+        valor_unitario: precoUnitarioHires, 
         data_compra: dataInicio 
       }])
+      if (error) return toast.error("Erro: " + error.message)
       toast.success("Compra salva!")
     }
 
-    setNovoLancamento({ produto: "", quantidade: "", valorTotal: "", motivo: "Quebra/Desperdício" })
+    setNovoLancamento({ ...novoLancamento, produto: "", quantidade: "", valorTotal: "", motivo: "Quebra/Desperdício" })
     onChange()
   }
 
   const cancelarEdicaoCompra = () => {
     setEditandoCompraId(null)
-    setNovoLancamento({ produto: "", quantidade: "", valorTotal: "", motivo: "Quebra/Desperdício" })
+    setNovoLancamento({ ...novoLancamento, produto: "", quantidade: "", valorTotal: "", motivo: "Quebra/Desperdício" })
   }
 
   const handleSalvarSaida = async () => {
     if (isReadOnly) return toast.error("Período travado para edições!")
-    if (!novoLancamento.produto || !novoLancamento.quantidade || !novoLancamento.motivo) return toast.error("Preencha todos os campos!")
-    const prod = produtos.find((p: any) => p.nome === novoLancamento.produto)
-    await supabase.from('saidas_avulsas').insert([{ produto_id: prod.id, quantidade: parseFloat(novoLancamento.quantidade.replace(',', '.')), motivo: novoLancamento.motivo, data_saida: dataInicio }])
-    toast.success("Saída salva!"); setNovoLancamento({ produto: "", quantidade: "", valorTotal: "", motivo: "Quebra/Desperdício" }); onChange();
+    
+    let erroBanco = null;
+
+    if (novoLancamento.modoManual) {
+      if (!novoLancamento.descricaoManual || !novoLancamento.valorTotal) return toast.error("Preencha descrição e valor!")
+      const { error } = await supabase.from('saidas_avulsas').insert([{ 
+        descricao_manual: novoLancamento.descricaoManual, 
+        valor_total: parseFloat(novoLancamento.valorTotal.replace(',', '.')), 
+        motivo: "Dedução Manual CMV", 
+        data_saida: dataInicio,
+        quantidade: 1 
+      }])
+      erroBanco = error;
+    } else {
+      if (!novoLancamento.produto || !novoLancamento.quantidade) return toast.error("Preencha produto e qtd!")
+      const prod = produtos.find((p: any) => p.nome === novoLancamento.produto)
+      const valUnit = parseFloat(contagemInicial[prod.id]?.valor || "0")
+      const { error } = await supabase.from('saidas_avulsas').insert([{ 
+        produto_id: prod.id, 
+        quantidade: parseFloat(novoLancamento.quantidade.replace(',', '.')), 
+        valor_total: parseFloat(novoLancamento.quantidade.replace(',', '.')) * valUnit,
+        motivo: novoLancamento.motivo, 
+        data_saida: dataInicio 
+      }])
+      erroBanco = error;
+    }
+
+    if (erroBanco) {
+      console.error(erroBanco);
+      return toast.error("Erro no BD (Verifique o Cache): " + erroBanco.message);
+    }
+
+    toast.success("Dedução/Saída registrada!"); 
+    setNovoLancamento({ ...novoLancamento, produto: "", quantidade: "", valorTotal: "", descricaoManual: "" }); 
+    onChange();
   }
 
   const handleExcluir = async (id: number, tabela: string) => {
     if (isReadOnly) return toast.error("Período travado para edições!")
     if (!confirm("Apagar lançamento?")) return
-    await supabase.from(tabela).delete().eq('id', id)
+    const { error } = await supabase.from(tabela).delete().eq('id', id)
+    if (error) return toast.error("Erro: " + error.message)
     toast.success("Removido com sucesso!"); onChange();
   }
 
-  // A FUNÇÃO BLINDADA: Nunca mais vai falhar em silêncio.
   const handleSalvarContagem = async () => {
     if (isReadOnly) return toast.error("Período travado para edições!")
     const tipo = aba === "inicial" ? "Inicial" : "Final"
@@ -99,21 +124,17 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
     toast.loading(`Salvando Estoque ${tipo}...`, { id: "salva-estoque" })
 
     try {
-      // Deleta o registro anterior para evitar duplicação
       const { error: errDel } = await supabase.from('estoques').delete().eq('tipo_contagem', tipo).gte('data_contagem', dataInicio).lte('data_contagem', dataFim)
       if (errDel) throw errDel;
 
       const inserts = Object.entries(contagem).map(([id, d]) => {
-        // Pega com segurança e previne undefined
         const qtdStr = d && d.qtd ? String(d.qtd).trim() : "";
         let valStr = d && d.valor ? String(d.valor).trim() : "";
 
-        // Se for Final, espelha do inicial
         if (tipo === "Final") {
           valStr = contagemInicial[parseInt(id)]?.valor ? String(contagemInicial[parseInt(id)].valor).trim() : "0";
         }
 
-        // Tenta converter, se der errado por sujeira, vira NaN (que a gente filtra na linha de baixo)
         const q = parseFloat(qtdStr.replace(',', '.'));
         const v = parseFloat(valStr.replace(',', '.'));
 
@@ -124,7 +145,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
           tipo_contagem: tipo,
           data_contagem: dataInicio
         }
-      }).filter(i => i.quantidade !== null) // Filtro: só vai para o banco o que realmente for número.
+      }).filter(i => i.quantidade !== null)
 
       if (inserts.length > 0) {
         const { error: insErr } = await supabase.from('estoques').insert(inserts)
@@ -137,7 +158,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
       await onChange();
 
     } catch (error: any) {
-      // Se algo bizarro acontecer no banco, ele mostra na tela.
       toast.error("Erro no sistema ao salvar: " + error.message, { id: "salva-estoque", duration: 5000 });
     }
   }
@@ -157,7 +177,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
         novoEstoque[e.produto_id] = { qtd: e.quantidade.toString(), valor: e.valor_unitario.toString() }
       })
       setContagem(novoEstoque)
-      toast.success("Dados carregados na tela! Clique em SALVAR MANUALMENTE para confirmar.")
+      toast.success("Dados carregados na tela! Clique em SALVAR CONTAGEM lá embaixo para confirmar.")
     } else {
       toast.error("Nenhum fechamento encontrado na semana anterior.")
     }
@@ -173,7 +193,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
   }
 
   return (
-    <div className="space-y-6 relative">
+    <div className="space-y-6 relative pb-32">
       {isReadOnly && (
         <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded-r-xl flex items-center gap-3 shadow-sm">
           <Lock className="w-5 h-5" />
@@ -185,7 +205,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
         {[
           { id: "inicial", label: "Estoque Inicial" },
           { id: "compras", label: "Compras" },
-          { id: "saidas", label: "Saídas Avulsas" },
+          { id: "saidas", label: "Deduções/Saídas" },
           { id: "faturamento", label: "Faturamento" },
           { id: "final", label: "Estoque Final" }
         ].map(t => (
@@ -256,7 +276,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
                           <button 
                             onClick={() => {
                               setEditandoCompraId(c.id);
-                              setNovoLancamento({ produto: c.produto, quantidade: c.quantidade.toString(), valorTotal: c.valorTotal.toString(), motivo: "Quebra/Desperdício" });
+                              setNovoLancamento({ ...novoLancamento, produto: c.produto, quantidade: c.quantidade.toString(), valorTotal: c.valorTotal.toFixed(2), motivo: "Quebra/Desperdício" });
                               window.scrollTo({ top: 0, behavior: 'smooth' });
                             }} 
                             className="p-2 text-slate-300 hover:text-blue-600 bg-white shadow-sm border border-slate-100 rounded-lg transition-all opacity-0 group-hover:opacity-100"
@@ -284,36 +304,65 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
         {aba === "saidas" && (
           <div className="space-y-6">
             {!isReadOnly && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-slate-50 p-6 rounded-2xl border">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black text-slate-500 uppercase">Insumo Perdido</label>
-                  <select className="p-3 rounded-xl border font-bold outline-none focus:border-amber-500" value={novoLancamento.produto} onChange={e => setNovoLancamento({ ...novoLancamento, produto: e.target.value })}>
-                    <option value="">Selecione...</option>{produtos.map((p: any) => <option key={p.id}>{p.nome}</option>)}
-                  </select>
+              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
+                <div className="flex justify-center mb-2">
+                  <button onClick={() => setNovoLancamento({...novoLancamento, modoManual: !novoLancamento.modoManual})} className={`px-4 py-2 rounded-full font-black text-[10px] uppercase border transition-all ${novoLancamento.modoManual ? 'bg-rose-500 text-white border-rose-600 shadow-md' : 'bg-white text-slate-400 border-slate-200'}`}>
+                    {novoLancamento.modoManual ? '✓ Modo Manual: Dedução por Texto/Valor' : 'Modo Padrão: Abate por Insumo'}
+                  </button>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black text-slate-500 uppercase">Qtd Descartada</label>
-                  <input type="text" placeholder="0" className="p-3 rounded-xl border font-bold outline-none focus:border-amber-500" value={novoLancamento.quantidade} onChange={e => setNovoLancamento({ ...novoLancamento, quantidade: e.target.value })} />
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                  {novoLancamento.modoManual ? (
+                    <div className="md:col-span-2 flex flex-col gap-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Descrição da Saída</label>
+                      <input type="text" placeholder="Ex: Strogonoff p/ Prensadão..." className="p-3 rounded-xl border font-bold bg-white outline-none focus:border-rose-500" value={novoLancamento.descricaoManual} onChange={e => setNovoLancamento({ ...novoLancamento, descricaoManual: e.target.value })} />
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Escolha o Insumo</label>
+                      <select className="p-3 rounded-xl border font-bold bg-white outline-none focus:border-rose-500" value={novoLancamento.produto} onChange={e => setNovoLancamento({ ...novoLancamento, produto: e.target.value })}>
+                        <option value="">Selecione...</option>{produtos.map((p: any) => <option key={p.id}>{p.nome}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {!novoLancamento.modoManual && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Qtd</label>
+                      <input type="text" placeholder="0" className="p-3 rounded-xl border font-bold outline-none focus:border-rose-500" value={novoLancamento.quantidade} onChange={e => setNovoLancamento({ ...novoLancamento, quantidade: e.target.value })} />
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{novoLancamento.modoManual ? 'Valor em Reais (R$)' : 'Motivo'}</label>
+                    {novoLancamento.modoManual ? (
+                      <input type="text" placeholder="0,00" className="p-3 rounded-xl border font-bold bg-rose-50 outline-none focus:border-rose-500" value={novoLancamento.valorTotal} onChange={e => setNovoLancamento({ ...novoLancamento, valorTotal: e.target.value })} />
+                    ) : (
+                      <select className="p-3 rounded-xl border font-bold outline-none focus:border-rose-500" value={novoLancamento.motivo} onChange={e => setNovoLancamento({ ...novoLancamento, motivo: e.target.value })}>
+                        <option value="Quebra/Desperdício">Quebra/Desperdício</option>
+                        <option value="Alimentação Funcionário">Alimentação Funcionário</option>
+                        <option value="Retirada Sócio">Retirada Sócio</option>
+                      </select>
+                    )}
+                  </div>
+
+                  <button onClick={handleSalvarSaida} className="bg-rose-500 text-white p-3 rounded-xl font-black flex justify-center items-center gap-2 hover:bg-rose-600 transition-all shadow-md shadow-rose-200">
+                    <MinusCircle size={18}/> DEDUZIR DO CMV
+                  </button>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black text-slate-500 uppercase">Motivo</label>
-                  <select className="p-3 rounded-xl border font-bold outline-none focus:border-amber-500" value={novoLancamento.motivo} onChange={e => setNovoLancamento({ ...novoLancamento, motivo: e.target.value })}>
-                    <option value="Quebra/Desperdício">Prensadão</option>
-                    <option value="Quebra/Desperdício">Desperdício</option>
-                    <option value="Refeição Funcionários">Refeição Funcionários</option>
-                    <option value="Vencido">Vencido</option>
-                    <option value="Outros">Outros</option>
-                  </select>
-                </div>
-                <button onClick={handleSalvarSaida} className="bg-amber-500 text-white p-3 rounded-xl font-black hover:bg-amber-600 transition-colors flex justify-center items-center gap-2"><Package className="w-5 h-5" /> REGISTRAR</button>
               </div>
             )}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="border-b text-slate-400 font-black uppercase text-[10px]"><tr><th className="pb-3 text-left">Item Descartado</th><th className="pb-3 text-left">Motivo</th><th className="pb-3 text-center">Quantidade</th>{!isReadOnly && <th className="pb-3 text-right">Ação</th>}</tr></thead>
+                <thead className="border-b text-slate-400 font-black uppercase text-[10px]"><tr><th className="pb-3 text-left">Lançamento</th><th className="pb-3 text-left">Motivo / Descrição</th><th className="pb-3 text-right">Abate (R$)</th>{!isReadOnly && <th className="pb-3 text-right">Ação</th>}</tr></thead>
                 <tbody className="divide-y divide-slate-50">
                   {data.saidas.map((s: any) => (
-                    <tr key={s.id} className="hover:bg-slate-50 transition-colors group"><td className="py-4 font-bold text-slate-700">{s.produto}</td><td className="py-4 font-bold text-slate-500">{s.motivo}</td><td className="py-4 text-center font-black text-amber-600">{s.quantidade}</td>{!isReadOnly && <td className="py-4 text-right"><button onClick={() => handleExcluir(s.id, 'saidas_avulsas')} className="p-2 text-slate-300 hover:text-red-600 bg-white shadow-sm border border-slate-100 rounded-lg transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button></td>}</tr>
+                    <tr key={s.id} className="hover:bg-slate-50 transition-colors group">
+                      <td className="py-4 font-bold text-slate-700">{s.descricaoManual || s.produto}</td>
+                      <td className="py-4 font-medium italic text-slate-500">{s.motivo}</td>
+                      <td className="py-4 text-right font-black text-rose-600">{formatBRL(s.valorTotal)}</td>
+                      {!isReadOnly && <td className="py-4 text-right"><button onClick={() => handleExcluir(s.id, 'saidas_avulsas')} className="p-2 text-slate-300 hover:text-red-600 bg-white shadow-sm border border-slate-100 rounded-lg transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button></td>}
+                    </tr>
                   ))}
                 </tbody>
               </table>
@@ -329,7 +378,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
                 {aba === "inicial" && !isReadOnly && (
                   <button onClick={handlePuxarAnterior} className="bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-100 transition-colors shadow-sm"><ArrowDownToLine className="w-4 h-4" /> PUXAR ANTERIOR</button>
                 )}
-                {!isReadOnly && <button onClick={handleSalvarContagem} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"><Save className="w-4 h-4" /> SALVAR CONTAGEM</button>}
               </div>
             </div>
 
@@ -365,17 +413,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
                 </div>
               ))}
             </div>
-
-            {/* BOTÃO DE ENCERRAR SEMANA AGORA FICA AQUI NO ESTOQUE FINAL */}
-            {aba === "final" && !isReadOnly && (
-              <div className="mt-10 pt-8 border-t border-slate-100 flex flex-col items-center">
-                <h4 className="text-lg font-black text-slate-800 mb-2">Finalizou a contagem?</h4>
-                <p className="text-sm text-slate-500 font-medium mb-6 text-center max-w-md">Lembre-se de salvar a contagem acima antes de encerrar o ciclo. O encerramento trava esta semana contra novas edições.</p>
-                <button onClick={onSemanaFechada} className="w-full max-w-sm bg-slate-900 text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-2 hover:bg-slate-800 transition-transform hover:scale-105 shadow-xl">
-                  <CheckCircle2 className="w-6 h-6" /> ENCERRAR SEMANA OFICIALMENTE
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -395,6 +432,21 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
           </div>
         )}
       </div>
+
+      {/* ÁREA DOS BOTÕES FIXOS NO RODAPÉ */}
+      {!isReadOnly && (aba === "inicial" || aba === "final") && (
+        <div className="fixed bottom-0 left-0 right-0 lg:left-72 bg-white/80 backdrop-blur-md p-6 border-t flex flex-col sm:flex-row gap-4 justify-center items-center shadow-[0_-10px_30px_-15px_rgba(0,0,0,0.1)] z-30">
+            <button onClick={handleSalvarContagem} className="w-full max-w-md bg-blue-600 text-white py-6 rounded-3xl font-black text-xl flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-2xl shadow-blue-500/40 transform hover:scale-[1.02]">
+               <Save size={28}/> SALVAR CONTAGEM {aba.toUpperCase()}
+            </button>
+            {aba === "final" && (
+              <button onClick={onSemanaFechada} className="w-full max-w-xs bg-slate-900 text-white py-6 rounded-3xl font-black text-lg flex items-center justify-center gap-2 hover:bg-slate-800 transition-all shadow-xl">
+                 <CheckCircle2 size={24}/> ENCERRAR CICLO
+              </button>
+            )}
+        </div>
+      )}
+
     </div>
   )
 }
