@@ -1,13 +1,18 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { TrendingUp, TrendingDown, Calculator, Pizza, PackageOpen, List, X, CalendarDays, Search, ReceiptText, Filter, Flame } from "lucide-react"
+import { TrendingUp, TrendingDown, Calculator, Pizza, PackageOpen, List, X, CalendarDays, Search, ReceiptText, Filter, Flame, ClipboardCheck } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
-const formatBRL = (v: number) => {
-  if (isNaN(v) || v === null) return "R$ 0,00"
-  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+const formatBRL = (v: any) => {
+  try {
+    if (v === null || v === undefined || isNaN(Number(v))) return "R$ 0,00"
+    return Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+  } catch (e) {
+    return "R$ 0,00";
+  }
 }
+
 const formatPerc = (v: number) => {
   if (isNaN(v) || v === null || !isFinite(v)) return "0.00%"
   return `${v.toFixed(2)}%`
@@ -88,20 +93,29 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
              custoConsumido = 0;
           }
 
+          // AQUI ESTÁ A MÁGICA DOS CÁLCULOS QUE VOCÊ PEDIU
           return { 
             item: p.nome, 
             unidade: p.unidade, 
             grupo: p.grupo,
             producao_interna: p.producao_interna,
-            qtdIni, qtdComp, qtdFin, qtdConsumida,
-            valorConsumido: custoConsumido > 0 ? custoConsumido : 0 
+            qtdIni, 
+            valorIni: qtdIni * valIni, // Financeiro Inicial
+            qtdComp, 
+            valorComp: custoComp,      // Financeiro Comprado
+            qtdFin, 
+            valorFinal: qtdFin * valFin, // Financeiro Final (Estoque Sobrou)
+            qtdConsumida,
+            valorConsumido: custoConsumido > 0 ? custoConsumido : 0 // Financeiro Consumido
           }
-        }).filter(i => i.valorConsumido > 0 || i.qtdConsumida > 0).sort((a, b) => b.valorConsumido - a.valorConsumido)
+        })
+        // O FILTRO AGORA MOSTRA TUDO QUE TEM MOVIMENTAÇÃO OU SALDO, NUNCA MAIS ESCONDE PRODUTOS!
+        .filter(i => i.valorConsumido > 0 || i.qtdConsumida !== 0 || i.qtdIni > 0 || i.qtdFin > 0 || i.qtdComp > 0)
+        .sort((a, b) => b.valorConsumido - a.valorConsumido)
 
         const totalDed = saidas.reduce((a, s) => a + parseFloat(s.valor_total || 0), 0)
         let cmvValorReal = consumoDetalhado.reduce((acc, curr) => acc + curr.valorConsumido, 0)
         
-        // Se for o painel Geral, abater as deduções
         if (filtroCategoria === "Geral") {
           cmvValorReal -= totalDed;
         }
@@ -220,6 +234,10 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                   {semanasData.map(s => <td key={s.id} className="p-4 font-black text-emerald-600">{formatBRL(s.faturamento)}</td>)}
                 </tr>
                 <tr className="hover:bg-slate-50">
+                  <td className="p-4 text-left font-bold text-slate-500 bg-slate-50/50">Compras ({filtroCategoria})</td>
+                  {semanasData.map(s => <td key={s.id} className="p-4 text-amber-600 font-bold">{formatBRL(s.compras)}</td>)}
+                </tr>
+                <tr className="hover:bg-slate-50">
                   <td className="p-4 text-left font-bold text-slate-500 bg-slate-50/50">Deduções / Saídas (-)</td>
                   {semanasData.map(s => <td key={s.id} className="p-4 text-rose-500 font-bold">{formatBRL(s.deducoes)}</td>)}
                 </tr>
@@ -252,16 +270,16 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
       <div className="bg-white rounded-[32px] shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[600px]">
         <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50">
           <div>
-            <h4 className="font-black text-slate-800 text-lg flex items-center gap-2"><Flame className="text-red-500 w-5 h-5"/> Ranking de Consumo ({filtroCategoria})</h4>
-            <p className="text-xs font-medium text-slate-500 mt-1">Veja o que entrou, saiu e o custo exato (Fabricados não geram custo duplo).</p>
+            <h4 className="font-black text-slate-800 text-lg flex items-center gap-2"><ClipboardCheck className="text-blue-500 w-5 h-5"/> Auditoria Completa de Estoque ({filtroCategoria})</h4>
+            <p className="text-xs font-medium text-slate-500 mt-1">Visão completa: Exibindo todos os produtos em estoque e seus valores financeiros.</p>
           </div>
-          <select className="p-3 rounded-xl border border-slate-200 text-sm font-bold bg-white shadow-sm outline-none focus:border-red-500 cursor-pointer" value={semanaSelecionadaModal} onChange={e => setSemanaSelecionadaModal(e.target.value)}>
+          <select className="p-3 rounded-xl border border-slate-200 text-sm font-bold bg-white shadow-sm outline-none focus:border-blue-500 cursor-pointer" value={semanaSelecionadaModal} onChange={e => setSemanaSelecionadaModal(e.target.value)}>
             {semanasData.map(s => <option key={s.id} value={s.id}>{s.nome} ({s.periodo})</option>)}
           </select>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {semanaSel.consumoDetalhado.length === 0 && <p className="text-center text-slate-400 font-bold mt-10">Nenhum consumo para a categoria {filtroCategoria} nessa semana.</p>}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/30">
+          {semanaSel.consumoDetalhado.length === 0 && <p className="text-center text-slate-400 font-bold mt-10">Nenhum consumo ou estoque para a categoria {filtroCategoria} nessa semana.</p>}
           
           {semanaSel.consumoDetalhado.map((item: any, i: number) => (
             <div key={i} className={`flex flex-col p-5 bg-white hover:bg-slate-50 transition-colors rounded-2xl border shadow-sm ${item.producao_interna ? 'border-blue-200 bg-blue-50/20' : 'border-slate-200'}`}>
@@ -275,7 +293,7 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo Total Usado</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo Total Usado no CMV</p>
                   {item.producao_interna ? (
                      <p className="font-black text-blue-500 text-sm bg-blue-50 px-2 py-1 rounded-md border border-blue-100">R$ 0,00 (Subproduto)</p>
                   ) : (
@@ -284,27 +302,31 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                 </div>
               </div>
 
-              {/* A ORDEM DO TIO TIAGO COM FONTES GIGANTES */}
+              {/* AQUI ESTÁ A AUDITORIA FINANCEIRA COMPLETA QUE VOCÊ PEDIU */}
               <div className="grid grid-cols-4 gap-2 bg-slate-50 p-4 rounded-xl text-center border border-slate-200 shadow-inner">
                 
-                <div className="flex flex-col border-r border-slate-200/60">
+                <div className="flex flex-col border-r border-slate-200/60 p-1">
                   <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Tinha (Inicial)</span>
                   <span className="text-slate-700 font-black text-xl md:text-2xl mt-1">{item.qtdIni} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
+                  <span className="text-slate-500/80 text-[10px] font-bold mt-1.5 bg-slate-100 py-0.5 rounded-md">{formatBRL(item.valorIni)}</span>
                 </div>
                 
-                <div className="flex flex-col border-r border-slate-200/60">
+                <div className="flex flex-col border-r border-slate-200/60 p-1">
                   <span className="text-amber-500/80 text-[10px] uppercase font-bold tracking-wider">+ Comprou</span>
                   <span className="text-amber-600 font-black text-xl md:text-2xl mt-1">{item.qtdComp} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
+                  <span className="text-amber-600/80 text-[10px] font-bold mt-1.5 bg-amber-50 py-0.5 rounded-md">{formatBRL(item.valorComp)}</span>
                 </div>
                 
-                <div className="flex flex-col border-r border-slate-200/60">
+                <div className="flex flex-col border-r border-slate-200/60 p-1">
                   <span className="text-purple-500/80 text-[10px] uppercase font-bold tracking-wider">= Consumiu</span>
                   <span className="text-purple-600 font-black text-xl md:text-2xl mt-1">{item.qtdConsumida} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
+                  <span className="text-purple-600/80 text-[10px] font-bold mt-1.5 bg-purple-50 py-0.5 rounded-md">{item.producao_interna ? "R$ 0,00" : formatBRL(item.valorConsumido)}</span>
                 </div>
                 
-                <div className="flex flex-col justify-center">
-                  <span className="text-blue-400/80 text-[10px] uppercase font-bold tracking-wider">Sobrou (Final)</span>
+                <div className="flex flex-col justify-center p-1">
+                  <span className="text-blue-500/90 text-[10px] uppercase font-black tracking-wider">Sobrou (Final)</span>
                   <span className="text-blue-600 font-black text-xl md:text-2xl mt-1">{item.qtdFin} <span className="text-[10px] font-bold uppercase">{item.unidade}</span></span>
+                  <span className="text-blue-700/90 text-[11px] font-black mt-1.5 bg-blue-100 py-1 rounded-md shadow-sm border border-blue-200">{formatBRL(item.valorFinal)}</span>
                 </div>
                 
               </div>
@@ -316,4 +338,4 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
 
     </div>
   )
-} 
+}
