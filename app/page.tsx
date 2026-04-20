@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { LayoutDashboard, ClipboardList, Package, Menu, Pizza, ReceiptText, LogOut, LineChart, CalendarDays, ShieldAlert, RefreshCw, ArrowRight, Lock, Edit3 } from "lucide-react"
+import { LayoutDashboard, ClipboardList, Package, Menu, Pizza, ReceiptText, LogOut, LineChart, CalendarDays, ShieldAlert, RefreshCw, ArrowRight, Lock, Edit3, Save, Unlock } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { Toaster, toast } from 'react-hot-toast'
 
@@ -46,6 +46,7 @@ function CMVApp() {
   const [isFechando, setIsFechando] = useState(false)
   
   const [semanaAberta, setSemanaAberta] = useState(false) 
+  const [modoAdminPassado, setModoAdminPassado] = useState(false)
   
   const [dataInicio, setDataInicio] = useState("")
   const [dataFim, setDataFim] = useState("")
@@ -57,7 +58,8 @@ function CMVApp() {
   const [contagemInicial, setContagemInicial] = useState<ContagemEstoque>({})
   const [contagemFinal, setContagemFinal] = useState<ContagemEstoque>({})
 
-  const isReadOnly = dataInicio !== "" && semanaOficial !== "" && dataInicio !== semanaOficial
+  const isHistorico = dataInicio !== "" && semanaOficial !== "" && dataInicio !== semanaOficial
+  const bloqueioAtivo = isHistorico && !modoAdminPassado
 
   useEffect(() => {
     const initApp = async () => {
@@ -117,14 +119,14 @@ function CMVApp() {
   }
 
   const handleSalvarCategoria = async (nome: string) => {
-    if (isReadOnly) return toast.error("Período travado!")
+    if (bloqueioAtivo) return toast.error("Período travado!")
     const { error } = await supabase.from('grupos').insert([{ nome }])
     if (error) toast.error("Erro ao salvar grupo.")
     else { toast.success("Grupo salvo!"); carregarTudo(); }
   }
 
   const handleExcluirCategoria = async (id: number) => {
-    if (isReadOnly) return toast.error("Período travado!")
+    if (bloqueioAtivo) return toast.error("Período travado!")
     if (!confirm("Excluir este grupo?")) return
     const { error } = await supabase.from('grupos').delete().eq('id', id)
     if (error) toast.error("Erro ao excluir!")
@@ -132,21 +134,21 @@ function CMVApp() {
   }
 
   const handleSalvarProdutoNoBanco = async (novoProd: any) => {
-    if (isReadOnly) return toast.error("Período travado!")
+    if (bloqueioAtivo) return toast.error("Período travado!")
     const { error } = await supabase.from('produtos').insert([novoProd])
     if (error) toast.error("Erro ao salvar: " + error.message)
     else { toast.success("Produto salvo!"); carregarTudo(); }
   }
 
   const handleEditarProdutoNoBanco = async (id: number, dadosEditados: any) => {
-    if (isReadOnly) return toast.error("Período travado!")
+    if (bloqueioAtivo) return toast.error("Período travado!")
     const { error } = await supabase.from('produtos').update(dadosEditados).eq('id', id)
     if (error) toast.error("Erro ao atualizar: " + error.message)
     else { toast.success("Produto atualizado!"); carregarTudo(); }
   }
 
   const handleExcluirProdutoNoBanco = async (id: number) => {
-    if (isReadOnly) return toast.error("Período travado!")
+    if (bloqueioAtivo) return toast.error("Período travado!")
     if (!confirm("Tem certeza que deseja excluir este produto?")) return
     const { error } = await supabase.from('produtos').delete().eq('id', id)
     if (error) toast.error("Erro ao excluir!")
@@ -157,7 +159,7 @@ function CMVApp() {
     const [fRes, cRes, sRes, eRes] = await Promise.all([
       supabase.from('financas_semanais').select('*').eq('data_inicio', dataInicio).maybeSingle(),
       supabase.from('compras').select('*, produtos(nome)').gte('data_compra', dataInicio).lte('data_compra', dataFim),
-      supabase.from('saidas_avulsas').select('*, produtos(nome)').gte('data_saida', dataInicio).lte('data_saida', dataFim),
+      supabase.from('saidas_avulsas').select('*').gte('data_saida', dataInicio).lte('data_saida', dataFim),
       supabase.from('estoques').select('*').gte('data_contagem', dataInicio).lte('data_contagem', dataFim)
     ])
 
@@ -176,7 +178,6 @@ function CMVApp() {
       outrosCustos: { embalagens: fRes.data?.embalagens || 0, materialLimpeza: fRes.data?.material_limpeza || 0 },
       compras: (cRes.data || []).map(c => ({ id: c.id, produto: c.produtos?.nome || "Insumo", quantidade: c.quantidade, valorUnitario: c.valor_unitario, valorTotal: c.quantidade * c.valor_unitario })),
       saidas: (sRes.data || []).map(s => {
-        // TRATAMENTO EXTRA AQUI: Se for saída sem produto, garantimos que não dá erro ao ler "produtos.nome"
         const nomeDoProduto = produtos.find(p => p.id === s.produto_id)?.nome || "Dedução Manual";
         return {
            id: s.id, 
@@ -213,10 +214,28 @@ function CMVApp() {
       localStorage.removeItem('sampa_semanaAberta')
       localStorage.removeItem('sampa_dataInicio')
       setSemanaAberta(false) 
+      setModoAdminPassado(false)
       
       setIsFechando(false)
       setTela("dashboard")
     }, 1500)
+  }
+
+  const handleAtivarEdicaoPassado = () => {
+    const senha = window.prompt("Digite a senha de autorização (1179):")
+    if (senha === "1179") {
+      setModoAdminPassado(true)
+      toast.success("Modo Edição Liberado!")
+    } else if (senha !== null) {
+      toast.error("Senha incorreta!")
+    }
+  }
+
+  const handleSairModoEdicao = () => {
+    setModoAdminPassado(false)
+    setDataInicio(semanaOficial)
+    setDataFim(calcularDataFim(semanaOficial))
+    toast.success("De volta à semana atual!")
   }
 
   if (!dataInicio) return null
@@ -261,13 +280,43 @@ function CMVApp() {
           <header className="h-20 bg-white border-b flex items-center justify-between px-8 shadow-sm">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-slate-500"><Menu /></button>
             <div className="flex items-center gap-4">
-              <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border ${isReadOnly ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
-                {isReadOnly ? <ShieldAlert className="w-5 h-5 text-red-500" /> : <CalendarDays className="w-5 h-5 text-blue-600" />}
+              
+              <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border ${isHistorico ? (modoAdminPassado ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200') : 'bg-slate-50 border-slate-200'}`}>
+                {isHistorico ? (modoAdminPassado ? <Unlock className="w-5 h-5 text-amber-500" /> : <ShieldAlert className="w-5 h-5 text-red-500" />) : <CalendarDays className="w-5 h-5 text-blue-600" />}
                 <div className="flex flex-col">
-                  <span className={`text-[10px] font-black uppercase ${isReadOnly ? 'text-red-500' : 'text-slate-400'}`}>{isReadOnly ? 'Auditando Passado' : 'Semana Atual'}</span>
-                  <input type="date" value={dataInicio} onChange={(e) => {setDataInicio(e.target.value); setDataFim(calcularDataFim(e.target.value));}} className="font-black text-sm bg-transparent outline-none cursor-pointer text-slate-800" />
+                  <span className={`text-[10px] font-black uppercase ${isHistorico ? (modoAdminPassado ? 'text-amber-500' : 'text-red-500') : 'text-slate-400'}`}>
+                    {isHistorico ? (modoAdminPassado ? 'Editando Passado (Admin)' : 'Auditando Passado') : 'Semana Atual'}
+                  </span>
+                  <input 
+                    type="date" 
+                    value={dataInicio} 
+                    onChange={(e) => {
+                      setDataInicio(e.target.value); 
+                      setDataFim(calcularDataFim(e.target.value));
+                      if (e.target.value === semanaOficial) setModoAdminPassado(false);
+                    }} 
+                    className="font-black text-sm bg-transparent outline-none cursor-pointer text-slate-800" 
+                  />
                 </div>
               </div>
+              
+              {isHistorico && !modoAdminPassado && (
+                <div className="flex items-center gap-2">
+                  <button onClick={() => {setDataInicio(semanaOficial); setDataFim(calcularDataFim(semanaOficial));}} className="bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-slate-300 transition-colors">
+                    Voltar p/ Atual <ArrowRight className="w-4 h-4"/>
+                  </button>
+                  <button onClick={handleAtivarEdicaoPassado} className="bg-slate-900 text-white px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-slate-800 shadow-sm transition-all">
+                    <Edit3 className="w-4 h-4"/> Editar Passado
+                  </button>
+                </div>
+              )}
+
+              {modoAdminPassado && (
+                <button onClick={handleSairModoEdicao} className="bg-amber-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-amber-600 shadow-lg animate-pulse transition-all">
+                  <Save className="w-4 h-4"/> Salvar e Voltar
+                </button>
+              )}
+
             </div>
           </header>
         )}
@@ -315,18 +364,18 @@ function CMVApp() {
                   onDeleteProduto={handleExcluirProdutoNoBanco} 
                   onAddCategoria={handleSalvarCategoria} 
                   onDeleteCategoria={handleExcluirCategoria} 
-                  isReadOnly={isReadOnly} 
+                  isReadOnly={bloqueioAtivo} 
                 />
               )}
               
-              {tela === "outros-custos" && <OutrosCustosDRE data={lancamentos} dataInicio={dataInicio} dataFim={dataFim} onChange={carregarDadosDoBanco} isReadOnly={isReadOnly} />}
+              {tela === "outros-custos" && <OutrosCustosDRE data={lancamentos} dataInicio={dataInicio} dataFim={dataFim} onChange={carregarDadosDoBanco} isReadOnly={bloqueioAtivo} />}
               {tela === "relatorios" && <Relatorios produtos={produtos} />}
               {tela === "estoque" && (
                 <Estoque 
                   dataInicio={dataInicio} dataFim={dataFim} produtos={produtos} data={lancamentos} 
                   contagemInicial={contagemInicial} contagemFinal={contagemFinal} 
                   onChange={carregarDadosDoBanco} onSemanaFechada={handleSemanaFechada} 
-                  isReadOnly={isReadOnly} 
+                  isReadOnly={bloqueioAtivo} 
                 />
               )}
             </div>
