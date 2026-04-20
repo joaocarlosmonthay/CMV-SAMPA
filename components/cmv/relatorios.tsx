@@ -84,19 +84,10 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           })
 
           const qtdFin = eF ? parseFloat(eF.quantidade) : 0
-          
-          // REGRA DO ESTOQUE FINAL: Última Compra
-          let valFin = valIni;
-          if (cP.length > 0) {
-             valFin = parseFloat(cP[cP.length - 1].valor_unitario);
-          }
+          const valFin = eF ? parseFloat(eF.valor_unitario) : valIni
           
           let custoConsumido = (qtdIni * valIni) + custoComp - (qtdFin * valFin)
           const qtdConsumida = qtdIni + qtdComp - qtdFin
-
-          if (p.producao_interna) {
-             custoConsumido = 0;
-          }
 
           return { 
             item: p.nome, 
@@ -108,25 +99,23 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
             qtdComp, 
             valorComp: custoComp,      
             qtdFin, 
-            valorFinal: qtdFin * valFin, // Agora usa o valor dinâmico sem depender de clique!
+            valorFinal: qtdFin * valFin, 
             qtdConsumida,
-            valorConsumido: custoConsumido > 0 ? custoConsumido : 0 
+            valorConsumido: custoConsumido 
           }
         })
-        .filter(i => i.valorConsumido > 0 || i.qtdConsumida !== 0 || i.qtdIni > 0 || i.qtdFin > 0 || i.qtdComp > 0)
+        .filter(i => i.valorConsumido !== 0 || i.qtdConsumida !== 0 || i.qtdIni > 0 || i.qtdFin > 0 || i.qtdComp > 0)
         .sort((a, b) => b.valorConsumido - a.valorConsumido)
 
         const totalDed = saidas.reduce((a, s) => a + parseFloat(s.valor_total || 0), 0)
-        let cmvValorReal = consumoDetalhado.reduce((acc, curr) => acc + curr.valorConsumido, 0)
         
-        if (filtroCategoria === "Geral") {
-          cmvValorReal -= totalDed;
-        }
+        const inicialVisual = est.filter(e => e.tipo_contagem === 'Inicial' && prodsFiltrados.find(p => p.id === e.produto_id)).reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
+        const finalVisual = est.filter(e => e.tipo_contagem === 'Final' && prodsFiltrados.find(p => p.id === e.produto_id)).reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
+        const comprasVisuais = comp.filter(c => prodsFiltrados.find(p => p.id === c.produto_id)).reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
+        const deducoesVisuais = filtroCategoria === "Geral" ? totalDed : 0
 
-        // Auditoria Totaiz visuais calculada pela regra da compra nova
-        const inicialVisual = consumoDetalhado.reduce((acc, item) => acc + item.valorIni, 0);
-        const comprasVisuais = consumoDetalhado.reduce((acc, item) => acc + item.valorComp, 0);
-        const deducoesVisuais = filtroCategoria === "Geral" ? totalDed : 0;
+        // A MÁGICA: FÓRMULA EXATA AQUI TAMBÉM
+        let cmvValorReal = inicialVisual + comprasVisuais - finalVisual - deducoesVisuais;
 
         const dFinal = new Date(f.data_inicio + "T12:00:00")
         dFinal.setDate(dFinal.getDate() + 6)
@@ -248,7 +237,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                 <tr className="bg-blue-50/20 hover:bg-blue-50/40">
                   <td className="p-4 text-left font-bold text-slate-700 bg-blue-50/30 flex flex-col">
                      CMV Líquido (R$)
-                     <span className="text-[9px] font-black text-blue-500">*Ignora Subprodutos e Abate Saídas</span>
                   </td>
                   {semanasData.map(s => <td key={s.id} className="p-4 font-black text-slate-800">{formatBRL(s.cmvValor)}</td>)}
                 </tr>
@@ -297,7 +285,7 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo Total Usado no CMV</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo Usado / Gerado no CMV</p>
                   {item.producao_interna ? (
                      <p className="font-black text-blue-500 text-sm bg-blue-50 px-2 py-1 rounded-md border border-blue-100">R$ 0,00 (Subproduto)</p>
                   ) : (
@@ -306,7 +294,6 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
                 </div>
               </div>
 
-              {/* AQUI ESTÁ A AUDITORIA FINANCEIRA COMPLETA QUE VOCÊ PEDIU */}
               <div className="grid grid-cols-4 gap-2 bg-slate-50 p-4 rounded-xl text-center border border-slate-200 shadow-inner">
                 
                 <div className="flex flex-col border-r border-slate-200/60 p-1">

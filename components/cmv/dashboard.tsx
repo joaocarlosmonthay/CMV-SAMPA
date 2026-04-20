@@ -27,7 +27,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
   const faturamentoAtual = lancamentos?.faturamento || 0
   const comprasAtual = (lancamentos?.compras || []).reduce((acc: number, c: any) => acc + parseFloat(c.valorTotal || 0), 0)
   
-  // SOMA AS DEDUÇÕES
   const deducoesAtual = (lancamentos?.saidas || []).reduce((acc: number, s: any) => acc + parseFloat(s.valorTotal || 0), 0)
 
   const getValorEstoqueInicial = (contagem: any) => {
@@ -39,7 +38,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
 
   const estInicialAtual = getValorEstoqueInicial(contagemInicial)
 
-  // NOVA LÓGICA: ESTOQUE FINAL COM BASE NA ÚLTIMA COMPRA
   const estFinalAtual = produtos?.reduce((acc: number, p: any) => {
     const qtdF = contagemFinal[p.id]?.qtd ? parseFloat(contagemFinal[p.id].qtd) : 0;
     if (qtdF <= 0) return acc;
@@ -48,38 +46,16 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
     let precoAplicado = 0;
     
     if (compProd.length > 0) {
-        precoAplicado = parseFloat(compProd[compProd.length - 1].valorUnitario); // Puxa última compra
+        precoAplicado = parseFloat(compProd[compProd.length - 1].valorUnitario); 
     } else {
-        precoAplicado = contagemInicial[p.id]?.valor ? parseFloat(contagemInicial[p.id].valor) : 0; // Puxa Inicial
+        precoAplicado = contagemInicial[p.id]?.valor ? parseFloat(contagemInicial[p.id].valor) : 0; 
     }
     
     return acc + (qtdF * precoAplicado);
   }, 0) || 0;
 
-  // CMV Real com a nova regra de preço final
-  let cmvRealR$ = 0;
-  if (produtos?.length > 0) {
-    produtos.forEach((p: any) => {
-      if (p.producao_interna) return; 
-      
-      const qI = contagemInicial[p.id]?.qtd ? parseFloat(contagemInicial[p.id].qtd) : 0;
-      const vI = contagemInicial[p.id]?.valor ? parseFloat(contagemInicial[p.id].valor) : 0;
-      const qF = contagemFinal[p.id]?.qtd ? parseFloat(contagemFinal[p.id].qtd) : 0;
-      
-      const compProd = (lancamentos?.compras || []).filter((c: any) => c.produto === p.nome);
-      const totalComp = compProd.reduce((acc: number, c: any) => acc + parseFloat(c.valorTotal), 0);
-      
-      // REGRA DO TIO TIAGO / DAVI (Última Compra)
-      let vF = vI;
-      if (compProd.length > 0) {
-         vF = parseFloat(compProd[compProd.length - 1].valorUnitario);
-      }
-      
-      cmvRealR$ += (qI * vI) + totalComp - (qF * vF);
-    });
-    // Abate as deduções manuais
-    cmvRealR$ = cmvRealR$ - deducoesAtual;
-  }
+  // A MÁGICA AQUI: A FÓRMULA EXATA DA SUA CALCULADORA
+  const cmvRealR$ = estInicialAtual + comprasAtual - estFinalAtual - deducoesAtual;
   
   const cmvRealPerc = faturamentoAtual > 0 ? (cmvRealR$ / faturamentoAtual) * 100 : 0
 
@@ -117,28 +93,11 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
         const totComp = myCompras.reduce((a, c) => a + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
         const totDed = mySaidas.reduce((a, s) => a + parseFloat(s.valor_total || 0), 0)
         
-        let cmvRS = 0;
-        produtos?.forEach((p: any) => {
-          if (p.producao_interna) return;
-          const eI = myEst.find(e => e.produto_id === p.id && e.tipo_contagem === 'Inicial');
-          const eF = myEst.find(e => e.produto_id === p.id && e.tipo_contagem === 'Final');
-          const cP = myCompras.filter(c => c.produto_id === p.id);
-          
-          const qI = eI ? parseFloat(eI.quantidade) : 0;
-          const vI = eI ? parseFloat(eI.valor_unitario) : 0;
-          const qF = eF ? parseFloat(eF.quantidade) : 0;
-          
-          // REGRA HISTÓRICA DA ÚLTIMA COMPRA
-          let vF = vI;
-          if (cP.length > 0) {
-             vF = parseFloat(cP[cP.length - 1].valor_unitario);
-          }
-          
-          const totalC = cP.reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0);
-          cmvRS += (qI * vI) + totalC - (qF * vF);
-        });
+        const eI_total = myEst.filter(e => e.tipo_contagem === 'Inicial').reduce((a, e) => a + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0);
+        const eF_total = myEst.filter(e => e.tipo_contagem === 'Final').reduce((a, e) => a + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0);
         
-        cmvRS = cmvRS - totDed;
+        // FÓRMULA GLOBAL NO HISTÓRICO TAMBÉM
+        const cmvRS = eI_total + totComp - eF_total - totDed;
 
         const dFinal = new Date(f.data_inicio + "T12:00:00")
         dFinal.setDate(dFinal.getDate() + 6)
@@ -257,7 +216,6 @@ export function Dashboard({ dataInicio, dataFim, lancamentos, contagemInicial, c
               <tr className="bg-blue-50/30">
                 <td className="py-4 px-6 font-bold text-slate-700 flex flex-col">
                   CMV Líquido (R$)
-                  <span className="text-[9px] font-black text-blue-500">*Sem Subprodutos</span>
                 </td>
                 {historicoSemanas.map(s => <td key={s.id} className="py-4 px-6 text-right font-black text-slate-800">{formatBRL(s.cmvValor)}</td>)}
               </tr>
