@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Package, ShoppingCart, DollarSign, Trash2, Save, CheckCircle2, ArrowDownToLine, Lock, Pencil, X, MinusCircle } from "lucide-react"
+import { Package, ShoppingCart, DollarSign, Trash2, Save, CheckCircle2, ArrowDownToLine, Lock, Pencil, X, MinusCircle, PenOffIcon } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { toast } from "react-hot-toast"
 
@@ -29,6 +29,22 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
 
   useEffect(() => { setContagem(aba === "inicial" ? contagemInicial : contagemFinal) }, [aba, contagemInicial, contagemFinal])
   useEffect(() => { setFaturamento(data.faturamento?.toString() || "") }, [data.faturamento])
+
+  // --- NOVA LÓGICA: PEGA O VALOR DA ÚLTIMA COMPRA OU DO INICIAL ---
+  const getPrecoFinalAplicado = (produtoId: number, produtoNome: string) => {
+    // 1. Tenta achar compras desse produto na semana
+    const comprasDoProduto = (data.compras || []).filter((c: any) => c.produto === produtoNome);
+    
+    if (comprasDoProduto.length > 0) {
+      // 2. Se achou, pega o valor_unitario do último lançamento (última compra)
+      const ultimaCompra = comprasDoProduto[comprasDoProduto.length - 1];
+      return parseFloat(ultimaCompra.valorUnitario);
+    }
+
+    // 3. Se não teve compra, puxa o valor que estava no Estoque Inicial
+    const valorInicial = contagemInicial[produtoId]?.valor;
+    return parseFloat(valorInicial?.replace(',', '.') || "0");
+  }
 
   const handleSalvarCompra = async () => {
     if (isReadOnly) return toast.error("Período travado para edições!")
@@ -72,7 +88,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
 
   const handleSalvarSaida = async () => {
     if (isReadOnly) return toast.error("Período travado para edições!")
-    
+ 
     let erroBanco = null;
 
     if (novoLancamento.modoManual) {
@@ -128,20 +144,27 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
       if (errDel) throw errDel;
 
       const inserts = Object.entries(contagem).map(([id, d]) => {
+        const pId = parseInt(id);
+        const produto = produtos.find((p: any) => p.id === pId);
+        
         const qtdStr = d && d.qtd ? String(d.qtd).trim() : "";
-        let valStr = d && d.valor ? String(d.valor).trim() : "";
+        let valorUnitarioParaSalvar = 0;
 
+        // SE FOR FINAL, USA A LÓGICA NOVA (Última Compra ou Inicial)
         if (tipo === "Final") {
-          valStr = contagemInicial[parseInt(id)]?.valor ? String(contagemInicial[parseInt(id)].valor).trim() : "0";
+          valorUnitarioParaSalvar = getPrecoFinalAplicado(pId, produto?.nome || "");
+        } else {
+          // SE FOR INICIAL, SALVA O QUE FOI DIGITADO
+          let valStr = d && d.valor ? String(d.valor).trim() : "0";
+          valorUnitarioParaSalvar = parseFloat(valStr.replace(',', '.'));
         }
 
         const q = parseFloat(qtdStr.replace(',', '.'));
-        const v = parseFloat(valStr.replace(',', '.'));
 
         return {
-          produto_id: parseInt(id),
+          produto_id: pId,
           quantidade: isNaN(q) ? null : q,
-          valor_unitario: isNaN(v) ? 0 : v,
+          valor_unitario: isNaN(valorUnitarioParaSalvar) ? 0 : valorUnitarioParaSalvar,
           tipo_contagem: tipo,
           data_contagem: dataInicio
         }
@@ -382,36 +405,38 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {produtos.map((p: any) => (
-                <div key={p.id} className={`p-4 border rounded-2xl ${isReadOnly ? 'bg-slate-50 opacity-70' : 'bg-white hover:border-blue-300 transition-colors'}`}>
-                  <div className="flex justify-between items-center mb-2">
-                    <p className="font-bold text-slate-700">{p.nome}</p>
-                    <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1 rounded-md">{p.unidade}</span>
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Qtd Real</label>
-                      <input type="text" disabled={isReadOnly} className="w-full p-2 border rounded-lg text-sm font-bold disabled:bg-slate-100 outline-none focus:border-blue-500" value={contagem[p.id]?.qtd || ""} onChange={e => setContagem({ ...contagem, [p.id]: { ...contagem[p.id], qtd: e.target.value } })} />
+              {produtos.map((p: any) => {
+                // SE FOR ABA FINAL, CHAMA A FUNÇÃO QUE PEGA O ÚLTIMO PREÇO DE COMPRA
+                const precoAplicado = aba === "final" ? getPrecoFinalAplicado(p.id, p.nome) : parseFloat(contagem[p.id]?.valor || "0");
+
+                return (
+                  <div key={p.id} className={`p-4 border rounded-2xl ${isReadOnly ? 'bg-slate-50 opacity-70' : 'bg-white hover:border-blue-300 transition-colors'}`}>
+                    <div className="flex justify-between items-center mb-2">
+                      <p className="font-bold text-slate-700">{p.nome}</p>
+                      <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1 rounded-md">{p.unidade}</span>
                     </div>
                     
-                    {aba === "inicial" ? (
+                    <div className="flex gap-2">
                       <div className="flex-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">R$ Unitário</label>
-                        <input type="text" disabled={isReadOnly} className="w-full p-2 border rounded-lg text-sm font-bold disabled:bg-slate-100 outline-none focus:border-blue-500" value={contagem[p.id]?.valor || ""} onChange={e => setContagem({ ...contagem, [p.id]: { ...contagem[p.id], valor: e.target.value } })} />
+                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Qtd Real</label>
+                        <input type="text" disabled={isReadOnly} className="w-full p-2 border rounded-lg text-sm font-bold disabled:bg-slate-100 outline-none focus:border-blue-500" value={contagem[p.id]?.qtd || ""} onChange={e => setContagem({ ...contagem, [p.id]: { ...contagem[p.id], qtd: e.target.value } })} />
                       </div>
-                    ) : (
+                      
                       <div className="flex-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Custo Aplicado</label>
-                        <div className="w-full p-2 bg-slate-50 border border-slate-100 rounded-lg text-sm font-bold text-slate-400 flex items-center h-[38px] overflow-hidden">
-                          {formatBRL(parseFloat(contagemInicial[p.id]?.valor?.replace(',', '.') || "0"))}
-                        </div>
+                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">{aba === "inicial" ? "R$ Unitário" : "Custo Aplicado"}</label>
+                        {aba === "inicial" ? (
+                          <input type="text" disabled={isReadOnly} className="w-full p-2 border rounded-lg text-sm font-bold disabled:bg-slate-100 outline-none focus:border-blue-500" value={contagem[p.id]?.valor || ""} onChange={e => setContagem({ ...contagem, [p.id]: { ...contagem[p.id], valor: e.target.value } })} />
+                        ) : (
+                          <div className="w-full p-2 bg-slate-50 border border-slate-100 rounded-lg text-sm font-bold text-blue-600 flex items-center h-[38px] overflow-hidden">
+                            {formatBRL(precoAplicado)}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    </div>
 
-                </div>
-              ))}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

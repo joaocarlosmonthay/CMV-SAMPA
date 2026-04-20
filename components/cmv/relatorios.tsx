@@ -84,7 +84,12 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           })
 
           const qtdFin = eF ? parseFloat(eF.quantidade) : 0
-          const valFin = eF ? parseFloat(eF.valor_unitario) : valIni
+          
+          // REGRA DO ESTOQUE FINAL: Última Compra
+          let valFin = valIni;
+          if (cP.length > 0) {
+             valFin = parseFloat(cP[cP.length - 1].valor_unitario);
+          }
           
           let custoConsumido = (qtdIni * valIni) + custoComp - (qtdFin * valFin)
           const qtdConsumida = qtdIni + qtdComp - qtdFin
@@ -93,23 +98,21 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
              custoConsumido = 0;
           }
 
-          // AQUI ESTÁ A MÁGICA DOS CÁLCULOS QUE VOCÊ PEDIU
           return { 
             item: p.nome, 
             unidade: p.unidade, 
             grupo: p.grupo,
             producao_interna: p.producao_interna,
             qtdIni, 
-            valorIni: qtdIni * valIni, // Financeiro Inicial
+            valorIni: qtdIni * valIni, 
             qtdComp, 
-            valorComp: custoComp,      // Financeiro Comprado
+            valorComp: custoComp,      
             qtdFin, 
-            valorFinal: qtdFin * valFin, // Financeiro Final (Estoque Sobrou)
+            valorFinal: qtdFin * valFin, // Agora usa o valor dinâmico sem depender de clique!
             qtdConsumida,
-            valorConsumido: custoConsumido > 0 ? custoConsumido : 0 // Financeiro Consumido
+            valorConsumido: custoConsumido > 0 ? custoConsumido : 0 
           }
         })
-        // O FILTRO AGORA MOSTRA TUDO QUE TEM MOVIMENTAÇÃO OU SALDO, NUNCA MAIS ESCONDE PRODUTOS!
         .filter(i => i.valorConsumido > 0 || i.qtdConsumida !== 0 || i.qtdIni > 0 || i.qtdFin > 0 || i.qtdComp > 0)
         .sort((a, b) => b.valorConsumido - a.valorConsumido)
 
@@ -120,9 +123,10 @@ export function Relatorios({ produtos }: { produtos: any[] }) {
           cmvValorReal -= totalDed;
         }
 
-        const inicialVisual = est.filter(e => e.tipo_contagem === 'Inicial' && prodsFiltrados.find(p => p.id === e.produto_id)).reduce((acc, e) => acc + (parseFloat(e.quantidade) * parseFloat(e.valor_unitario)), 0)
-        const comprasVisuais = comp.filter(c => prodsFiltrados.find(p => p.id === c.produto_id)).reduce((acc, c) => acc + (parseFloat(c.quantidade) * parseFloat(c.valor_unitario)), 0)
-        const deducoesVisuais = filtroCategoria === "Geral" ? totalDed : 0
+        // Auditoria Totaiz visuais calculada pela regra da compra nova
+        const inicialVisual = consumoDetalhado.reduce((acc, item) => acc + item.valorIni, 0);
+        const comprasVisuais = consumoDetalhado.reduce((acc, item) => acc + item.valorComp, 0);
+        const deducoesVisuais = filtroCategoria === "Geral" ? totalDed : 0;
 
         const dFinal = new Date(f.data_inicio + "T12:00:00")
         dFinal.setDate(dFinal.getDate() + 6)
