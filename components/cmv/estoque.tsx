@@ -30,18 +30,14 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
   useEffect(() => { setContagem(aba === "inicial" ? contagemInicial : contagemFinal) }, [aba, contagemInicial, contagemFinal])
   useEffect(() => { setFaturamento(data.faturamento?.toString() || "") }, [data.faturamento])
 
-  // --- NOVA LÓGICA: PEGA O VALOR DA ÚLTIMA COMPRA OU DO INICIAL ---
   const getPrecoFinalAplicado = (produtoId: number, produtoNome: string) => {
-    // 1. Tenta achar compras desse produto na semana
     const comprasDoProduto = (data.compras || []).filter((c: any) => c.produto === produtoNome);
     
     if (comprasDoProduto.length > 0) {
-      // 2. Se achou, pega o valor_unitario do último lançamento (última compra)
       const ultimaCompra = comprasDoProduto[comprasDoProduto.length - 1];
       return parseFloat(ultimaCompra.valorUnitario);
     }
 
-    // 3. Se não teve compra, puxa o valor que estava no Estoque Inicial
     const valorInicial = contagemInicial[produtoId]?.valor;
     return parseFloat(valorInicial?.replace(',', '.') || "0");
   }
@@ -102,7 +98,7 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
       }])
       erroBanco = error;
     } else {
-      if (!novoLancamento.produto || !novoLancamento.quantidade) return toast.error("Preencha produto e qtd!")
+      if (!novoLancamento.produto || !novoLancamento.quantidade) return toast.error("Preencha produto e quantiadade!")
       const prod = produtos.find((p: any) => p.nome === novoLancamento.produto)
       const valUnit = parseFloat(contagemInicial[prod.id]?.valor || "0")
       const { error } = await supabase.from('saidas_avulsas').insert([{ 
@@ -147,28 +143,38 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
         const pId = parseInt(id);
         const produto = produtos.find((p: any) => p.id === pId);
         
-        const qtdStr = d && d.qtd ? String(d.qtd).trim() : "";
+        const qtdStr = d?.qtd?.toString().trim() || "";
+        const valStr = d?.valor?.toString().trim() || "";
+
+        // Se for ABA FINAL e deixou a quantidade vazia, pula a linha (o sistema lê como 0 e usa o preço do Inicial/Compra automaticamente)
+        if (tipo === "Final" && qtdStr === "") return null;
+
+        // Se for ABA INICIAL e deixou TUDO vazio, pula a linha
+        if (tipo === "Inicial" && qtdStr === "" && valStr === "") return null;
+
+        let q = parseFloat(qtdStr.replace(',', '.'));
         let valorUnitarioParaSalvar = 0;
 
-        // SE FOR FINAL, USA A LÓGICA NOVA (Última Compra ou Inicial)
+        // A MÁGICA AQUI: Se a quantidade ficou vazia (ou inválida) mas tem um valor financeiro, a quantidade assume ZERO e salva o preço!
+        if (isNaN(q)) {
+          q = 0;
+        }
+
         if (tipo === "Final") {
           valorUnitarioParaSalvar = getPrecoFinalAplicado(pId, produto?.nome || "");
         } else {
-          // SE FOR INICIAL, SALVA O QUE FOI DIGITADO
-          let valStr = d && d.valor ? String(d.valor).trim() : "0";
           valorUnitarioParaSalvar = parseFloat(valStr.replace(',', '.'));
+          if (isNaN(valorUnitarioParaSalvar)) valorUnitarioParaSalvar = 0;
         }
-
-        const q = parseFloat(qtdStr.replace(',', '.'));
 
         return {
           produto_id: pId,
-          quantidade: isNaN(q) ? null : q,
-          valor_unitario: isNaN(valorUnitarioParaSalvar) ? 0 : valorUnitarioParaSalvar,
+          quantidade: q,
+          valor_unitario: valorUnitarioParaSalvar,
           tipo_contagem: tipo,
           data_contagem: dataInicio
         }
-      }).filter(i => i.quantidade !== null)
+      }).filter(i => i !== null) // Tira apenas as linhas que estão 100% em branco
 
       if (inserts.length > 0) {
         const { error: insErr } = await supabase.from('estoques').insert(inserts)
@@ -406,7 +412,6 @@ export function Estoque({ dataInicio, dataFim, produtos, data, contagemInicial, 
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {produtos.map((p: any) => {
-                // SE FOR ABA FINAL, CHAMA A FUNÇÃO QUE PEGA O ÚLTIMO PREÇO DE COMPRA
                 const precoAplicado = aba === "final" ? getPrecoFinalAplicado(p.id, p.nome) : parseFloat(contagem[p.id]?.valor || "0");
 
                 return (
